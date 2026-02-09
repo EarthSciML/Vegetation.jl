@@ -36,8 +36,8 @@ sys = LANDISBiomass()
 compiled = mtkcompile(sys)
 vars = unknowns(compiled)
 DataFrame(
-    :Name => [string(Symbolics.tosymbol(v, escape=false)) for v in vars],
-    :Units => [string(ModelingToolkit.get_unit(v)) for v in vars],
+    :Name => [string(Symbolics.tosymbol(v, escape = false)) for v in vars],
+    :Units => [dimension(ModelingToolkit.get_unit(v)) for v in vars],
     :Description => [ModelingToolkit.getdescription(v) for v in vars],
 )
 ```
@@ -47,8 +47,8 @@ DataFrame(
 ```@example landis
 params = parameters(compiled)
 DataFrame(
-    :Name => [string(Symbolics.tosymbol(p, escape=false)) for p in params],
-    :Units => [string(ModelingToolkit.get_unit(p)) for p in params],
+    :Name => [string(Symbolics.tosymbol(p, escape = false)) for p in params],
+    :Units => [dimension(ModelingToolkit.get_unit(p)) for p in params],
     :Default => [ModelingToolkit.hasdefault(p) ? ModelingToolkit.getdefault(p) : missing for p in params],
     :Description => [ModelingToolkit.getdescription(p) for p in params],
 )
@@ -58,6 +58,38 @@ DataFrame(
 
 ```@example landis
 eqs = equations(sys)
+```
+
+### Table 2: Species Life History Attributes
+
+The following table reproduces Table 2 from Scheller and Mladenoff (2004),
+showing life history attributes and maximum ANPP for 16 species characteristic
+of northern Wisconsin. These values are used to parameterize the biomass module
+for individual species.
+
+```@example landis
+species_data = DataFrame(
+    :Species => [
+        "Abies balsamea", "Acer rubrum", "Acer saccharum",
+        "Betula alleghaniensis", "Betula papyrifera", "Fraxinus americana",
+        "Picea glauca", "Pinus banksiana", "Pinus resinosa",
+        "Pinus strobus", "Populus tremuloides", "Quercus ellipsoidalis",
+        "Quercus rubra", "Thuja occidentalis", "Tilia americana",
+        "Tsuga canadensis",
+    ],
+    Symbol("Longevity (yr)") => [
+        200, 150, 400, 350, 120, 300,
+        300, 70, 250, 450, 120, 300,
+        250, 400, 250, 640,
+    ],
+    Symbol("Shade tol.") => [5, 4, 5, 4, 2, 4, 3, 1, 2, 3, 1, 2, 3, 4, 4, 5],
+    Symbol("Fire tol.") => [1, 1, 1, 2, 2, 1, 2, 3, 4, 3, 2, 5, 3, 1, 2, 3],
+    Symbol("Max ANPP (Mg/ha/yr)") => [
+        8.09, 7.46, 7.45, 7.64, 6.72, 7.00,
+        6.50, 5.77, 5.01, 10.19, 7.46, 7.73,
+        7.58, 4.93, 8.48, 6.27,
+    ],
+)
 ```
 
 ## Analysis
@@ -82,12 +114,12 @@ anpp_frac = [exp(1) * x * exp(-x) for x in B_AP_range]
 r, y0 = 0.08, 0.01
 mort_frac = [y0 / (y0 + (1 - y0) * exp(-r / y0 * x)) for x in B_AP_range]
 
-p = plot(B_AP_range, anpp_frac, label="ANPP", linewidth=2,
-    xlabel="B_AP (Actual biomass / Potential biomass)",
-    ylabel="Fraction ANPP_MAX",
-    title="Fig. 3a: Growth and Mortality vs. B_AP",
-    legend=:right, ylim=(0, 1.05))
-plot!(p, B_AP_range, mort_frac, label="Mortality", linewidth=2, linestyle=:dash)
+p = plot(B_AP_range, anpp_frac, label = "ANPP", linewidth = 2,
+    xlabel = "B_AP (Actual biomass / Potential biomass)",
+    ylabel = "Fraction ANPP_MAX",
+    title = "Fig. 3a: Growth and Mortality vs. B_AP",
+    legend = :right, ylim = (0, 1.05))
+plot!(p, B_AP_range, mort_frac, label = "Mortality", linewidth = 2, linestyle = :dash)
 p
 ```
 
@@ -105,11 +137,11 @@ d = 10.0
 # Eq. 6: M_AGE fraction = exp(age_frac * d) / exp(d)
 age_mort_frac = [exp(x * d) / exp(d) for x in age_frac_range]
 
-p = plot(age_frac_range, age_mort_frac, linewidth=2, label=nothing,
-    xlabel="Fraction of species' lifespan",
-    ylabel="Fraction of biomass removed",
-    title="Fig. 3b: Age-Related Mortality",
-    ylim=(0, 1.05))
+p = plot(age_frac_range, age_mort_frac, linewidth = 2, label = nothing,
+    xlabel = "Fraction of species' lifespan",
+    ylabel = "Fraction of biomass removed",
+    title = "Fig. 3b: Age-Related Mortality",
+    ylim = (0, 1.05))
 p
 ```
 
@@ -136,15 +168,15 @@ prob = ODEProblem(compiled, [], (0.0, tspan_s))
 sol = solve(prob)
 
 years = 1:200
-B_vals = [sol(yr * yr_to_s; idxs=compiled.B) / Mg_ha_to_kg_m2 for yr in years]
-D_vals = [sol(yr * yr_to_s; idxs=compiled.D_wood) / Mg_ha_to_kg_m2 for yr in years]
+B_vals = [sol(yr * yr_to_s; idxs = compiled.B) / Mg_ha_to_kg_m2 for yr in years]
+D_vals = [sol(yr * yr_to_s; idxs = compiled.D_wood) / Mg_ha_to_kg_m2 for yr in years]
 
-p = plot(years, B_vals, label="A. saccharum", linewidth=2,
-    xlabel="Simulation year",
-    ylabel="Biomass (Mg ha⁻¹)",
-    title="Fig. 6a: Single Species Growth (A. saccharum)",
-    legend=:right, ylim=(0, 300))
-plot!(p, years, D_vals, label="Dead biomass (D)", linewidth=2, linestyle=:dash)
+p = plot(years, B_vals, label = "A. saccharum", linewidth = 2,
+    xlabel = "Simulation year",
+    ylabel = "Biomass (Mg ha⁻¹)",
+    title = "Fig. 6a: Single Species Growth (A. saccharum)",
+    legend = :right, ylim = (0, 300))
+plot!(p, years, D_vals, label = "Dead biomass (D)", linewidth = 2, linestyle = :dash)
 p
 ```
 
@@ -160,26 +192,30 @@ longer time horizon.
 
 ```@example landis
 # Short-lived species: P. banksiana
-prob_short = ODEProblem(compiled,
-    Dict(compiled.B => 5.0 * Mg_ha_to_kg_m2, compiled.D_wood => 0.0,
-         compiled.max_age => 70.0 * yr_to_s,
-         compiled.ANPP_MAX => 5.77 * Mg_ha_to_kg_m2 / yr_to_s),
-    (0.0, tspan_s))
+prob_short = ODEProblem(
+    compiled,
+    Dict(
+        compiled.B => 5.0 * Mg_ha_to_kg_m2, compiled.D_wood => 0.0,
+        compiled.max_age => 70.0 * yr_to_s,
+        compiled.ANPP_MAX => 5.77 * Mg_ha_to_kg_m2 / yr_to_s
+    ),
+    (0.0, tspan_s)
+)
 sol_short = solve(prob_short)
 
 # Long-lived species: A. saccharum (defaults)
 prob_long = ODEProblem(compiled, [], (0.0, tspan_s))
 sol_long = solve(prob_long)
 
-B_short = [sol_short(yr * yr_to_s; idxs=compiled.B) / Mg_ha_to_kg_m2 for yr in years]
-B_long = [sol_long(yr * yr_to_s; idxs=compiled.B) / Mg_ha_to_kg_m2 for yr in years]
+B_short = [sol_short(yr * yr_to_s; idxs = compiled.B) / Mg_ha_to_kg_m2 for yr in years]
+B_long = [sol_long(yr * yr_to_s; idxs = compiled.B) / Mg_ha_to_kg_m2 for yr in years]
 
-p = plot(years, B_long, label="A. saccharum (400 yr)", linewidth=2,
-    xlabel="Simulation year",
-    ylabel="Living Biomass (Mg ha⁻¹)",
-    title="Species Longevity Comparison",
-    legend=:topright, ylim=(0, 250))
-plot!(p, years, B_short, label="P. banksiana (70 yr)", linewidth=2, linestyle=:dash)
+p = plot(years, B_long, label = "A. saccharum (400 yr)", linewidth = 2,
+    xlabel = "Simulation year",
+    ylabel = "Living Biomass (Mg ha⁻¹)",
+    title = "Species Longevity Comparison",
+    legend = :topright, ylim = (0, 250))
+plot!(p, years, B_short, label = "P. banksiana (70 yr)", linewidth = 2, linestyle = :dash)
 p
 ```
 
@@ -197,29 +233,37 @@ maximum).
 tspan_comp = 150.0 * yr_to_s
 
 # No competition
-prob_no_comp = ODEProblem(compiled,
-    Dict(compiled.B => 5.0 * Mg_ha_to_kg_m2, compiled.D_wood => 0.0,
-         compiled.B_other => 0.0),
-    (0.0, tspan_comp))
+prob_no_comp = ODEProblem(
+    compiled,
+    Dict(
+        compiled.B => 5.0 * Mg_ha_to_kg_m2, compiled.D_wood => 0.0,
+        compiled.B_other => 0.0
+    ),
+    (0.0, tspan_comp)
+)
 sol_no_comp = solve(prob_no_comp)
 
 # High competition: 400 Mg/ha of other species
-prob_comp = ODEProblem(compiled,
-    Dict(compiled.B => 5.0 * Mg_ha_to_kg_m2, compiled.D_wood => 0.0,
-         compiled.B_other => 400.0 * Mg_ha_to_kg_m2),
-    (0.0, tspan_comp))
+prob_comp = ODEProblem(
+    compiled,
+    Dict(
+        compiled.B => 5.0 * Mg_ha_to_kg_m2, compiled.D_wood => 0.0,
+        compiled.B_other => 400.0 * Mg_ha_to_kg_m2
+    ),
+    (0.0, tspan_comp)
+)
 sol_comp = solve(prob_comp)
 
 years_comp = 1:150
-B_no_comp = [sol_no_comp(yr * yr_to_s; idxs=compiled.B) / Mg_ha_to_kg_m2 for yr in years_comp]
-B_comp = [sol_comp(yr * yr_to_s; idxs=compiled.B) / Mg_ha_to_kg_m2 for yr in years_comp]
+B_no_comp = [sol_no_comp(yr * yr_to_s; idxs = compiled.B) / Mg_ha_to_kg_m2 for yr in years_comp]
+B_comp = [sol_comp(yr * yr_to_s; idxs = compiled.B) / Mg_ha_to_kg_m2 for yr in years_comp]
 
-p = plot(years_comp, B_no_comp, label="No competition", linewidth=2,
-    xlabel="Simulation year",
-    ylabel="Living Biomass (Mg ha⁻¹)",
-    title="Effect of Competition on Growth",
-    legend=:topright)
-plot!(p, years_comp, B_comp, label="B_other = 400 Mg/ha", linewidth=2, linestyle=:dash)
+p = plot(years_comp, B_no_comp, label = "No competition", linewidth = 2,
+    xlabel = "Simulation year",
+    ylabel = "Living Biomass (Mg ha⁻¹)",
+    title = "Effect of Competition on Growth",
+    legend = :topright)
+plot!(p, years_comp, B_comp, label = "B_other = 400 Mg/ha", linewidth = 2, linestyle = :dash)
 p
 ```
 

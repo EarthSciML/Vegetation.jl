@@ -25,7 +25,7 @@ doi:10.1016/j.ecolmodel.2004.01.022
 
 $(SIGNATURES)
 """
-@component function LANDISBiomass(; name=:LANDISBiomass)
+@component function LANDISBiomass(; name = :LANDISBiomass)
 
     # Conversion factors:
     # 1 Mg/ha = 0.1 kg/m²

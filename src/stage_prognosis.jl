@@ -101,6 +101,7 @@ $(SIGNATURES)
         DBH(t), [description = "Diameter at breast height", unit = u"m"]
         CR(t), [description = "Crown ratio (dimensionless)"]
         DDS_rate(t), [description = "Rate of change of diameter squared", unit = u"m^2/s"]
+        DG(t), [description = "Periodic diameter increment (dimensionless, in inches-space)"]
         HTGF_rate(t), [description = "Rate of height growth", unit = u"m/s"]
         crown_recession_rate(t), [description = "Rate of crown base rise", unit = u"m/s"]
         mortality_rate(t), [description = "Mortality rate", unit = u"s^-1"]
@@ -130,35 +131,38 @@ $(SIGNATURES)
         # DDS has units of in²/year, converted back to m²/s.
         DDS_rate ~ (BKR * one_inch_sq / one_year) * exp(
             -1.66955
-            + 0.4143 * log(SI / one_foot)       # SI in feet
-            - 0.004388 * (EL / hundred_feet)     # EL in hundreds of feet
-            - 0.3781 * log(CCF)                  # CCF dimensionless
-            + 0.4879 * log(CR)                   # CR dimensionless
-            + 0.9948 * log(DBH / one_inch)       # DBH in inches
-            + 0.006141 * PCT                     # PCT dimensionless
+                + 0.4143 * log(SI / one_foot)       # SI in feet
+                - 0.004388 * (EL / hundred_feet)     # EL in hundreds of feet
+                - 0.3781 * log(CCF)                  # CCF dimensionless
+                + 0.4879 * log(CR)                   # CR dimensionless
+                + 0.9948 * log(DBH / one_inch)       # DBH in inches
+                + 0.006141 * PCT                     # PCT dimensionless
         ),  # Eq. 1 - Basal area increment rate
+
+        # --- Diameter Growth Increment (Stage 1973, p. 15) ---
+        # DG = sqrt(DBH² + DDS) - DBH, all in inches
+        # DDS_rate has units m²/s, multiply by one_year to get m²/yr,
+        # then divide by one_inch_sq to get in²/yr (dimensionless).
+        # DBH/one_inch gives DBH in inches (dimensionless).
+        DG ~ max(0.001, sqrt((DBH / one_inch)^2 + DDS_rate * one_year / one_inch_sq) - DBH / one_inch),
 
         # --- Height Increment Model (Stage 1973, p. 15-16) ---
         # ln(HTGF) = c1 + c2*ln(DG+0.05) + c3*ln(DBH) + c4*ln(HT)
-        # DG is periodic diameter increment in inches.
-        # We approximate DG from the instantaneous DDS_rate:
-        #   DG ≈ DDS_rate * one_year / (2*DBH) (small increment approximation)
-        #   converted to inches: DG_in = DG / one_inch
+        # where DG = periodic diameter increment in inches (dimensionless)
         # HTGF is periodic height growth in feet/year, converted to m/s
         HTGF_rate ~ (one_foot / one_year) * exp(
             c1_ht
-            + c2_ht * log(max(0.01,
-                (DDS_rate * one_year / one_inch_sq) / (2.0 * DBH / one_inch)
-            ) + 0.05)
-            + c3_ht * log(DBH / one_inch)        # DBH in inches
-            + c4_ht * log(HT / one_foot)          # HT in feet
+                + c2_ht * log(DG + 0.05)              # DG in inches (dimensionless)
+                + c3_ht * log(DBH / one_inch)          # DBH in inches
+                + c4_ht * log(HT / one_foot)           # HT in feet
         ),  # Eq. 2 - Height growth rate
 
         # --- Crown Ratio Development (Stage 1973, p. 16) ---
         # Crown base recedes (rises) at a fraction of height increment rate
         # If CCF < 125: rate = 1/5 * height growth rate
         # If CCF >= 125: rate = 0.61 * height growth rate
-        crown_recession_rate ~ ifelse(CCF < 125.0,
+        crown_recession_rate ~ ifelse(
+            CCF < 125.0,
             0.2 * HTGF_rate,    # 1/5 of height growth
             0.61 * HTGF_rate    # 0.61 of height growth
         ),  # Eq. 3 - Crown recession
@@ -166,9 +170,10 @@ $(SIGNATURES)
         # --- Endemic Mortality Model (Stage 1973, p. 16-17) ---
         # Based on Lee (1971): rates depend on mean DBH with minimum at 10.6 inches
         # Factor distributes mortality by percentile: [0.25 + 1.5*(1 - PCT/100)]
-        mortality_rate ~ (1.0 / one_year) * max(0.0,
+        mortality_rate ~ (1.0 / one_year) * max(
+            0.0,
             (mort_a0 + mort_a1 * mean_DBH_in + mort_a2 * mean_DBH_in * mean_DBH_in)
-            * (0.25 + 1.5 * (1.0 - PCT / 100.0))
+                * (0.25 + 1.5 * (1.0 - PCT / 100.0))
         ),  # Eq. 4 - Mortality rate
 
         # ===== Differential Equations =====
@@ -188,6 +193,65 @@ $(SIGNATURES)
 
         # Survival (tree density decreases with mortality)
         D(N_trees) ~ -mortality_rate * N_trees,  # Mortality
+    ]
+
+    return System(eqs, t; name)
+end
+
+"""
+    StagePrognosisHCB(; name=:StagePrognosisHCB)
+
+Height to crown base (HCB) prediction model for lodgepole pine from Stage (1973, p. 16).
+
+This static model predicts the height to the base of the live crown as a function of
+tree height, stand density, elevation, relative tree size, and habitat type. It is used
+to estimate initial crown dimensions when field crown measurements are not available.
+
+The equation is:
+
+    HCB = -29.26 + 0.61*HT + 9.178*ln(CCF) - 0.222*EL - 5.80*DBH/RMSQD + HAB
+
+where all variables are in imperial units (feet for heights/elevation, inches for diameters).
+This implementation converts to SI units.
+
+**Reference**: Stage, A.R. (1973). Prognosis model for stand development.
+USDA Forest Service Research Paper INT-137, p. 16.
+
+$(SIGNATURES)
+"""
+@component function StagePrognosisHCB(; name = :StagePrognosisHCB)
+    @constants begin
+        one_inch = 0.0254, [description = "Reference length: 1 inch", unit = u"m"]
+        one_foot = 0.3048, [description = "Reference length: 1 foot", unit = u"m"]
+        hundred_feet = 30.48, [description = "Reference length: 100 feet", unit = u"m"]
+    end
+
+    @parameters begin
+        HT_input = 60.0 * 0.3048, [description = "Total tree height", unit = u"m"]
+        DBH_input = 6.0 * 0.0254, [description = "Diameter at breast height", unit = u"m"]
+        CCF = 100.0, [description = "Crown competition factor (dimensionless)"]
+        EL = 43.0 * 30.48, [description = "Elevation above sea level", unit = u"m"]
+        RMSQD = 7.0 * 0.0254, [description = "Diameter of tree of mean basal area", unit = u"m"]
+        HAB = 0.0, [description = "Habitat type adjustment (dimensionless, in feet-space)"]
+        # HAB values: 0.0 for Abies/Xerophyllum, -4.24 for Abies/Vaccinium,
+        #            -3.86 for Abies/Pachistima, -5.47 for Pseudotsuga/Calamagrostis
+    end
+
+    @variables begin
+        HCB_pred(t), [description = "Predicted height to crown base", unit = u"m"]
+    end
+
+    # Stage (1973, p. 16): HCB = -29.26 + 0.61*HT + 9.178*ln(CCF) - 0.222*EL - 5.80*DBH/RMSQD + HAB
+    # All terms in feet-space; convert result to meters
+    eqs = [
+        HCB_pred ~ one_foot * (
+            -29.26
+                + 0.61 * (HT_input / one_foot)
+                + 9.178 * log(CCF)
+                - 0.222 * (EL / hundred_feet)
+                - 5.8 * (DBH_input / one_inch) / (RMSQD / one_inch)
+                + HAB
+        ),  # HCB prediction (Stage 1973, p. 16)
     ]
 
     return System(eqs, t; name)

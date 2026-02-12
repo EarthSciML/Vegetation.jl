@@ -10,6 +10,6 @@ include("landis_biomass.jl")
 export LANDISBiomass
 
 include("stage_prognosis.jl")
-export StagePrognosis
+export StagePrognosis, StagePrognosisHCB
 
 end

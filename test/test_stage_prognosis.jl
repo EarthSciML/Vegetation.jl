@@ -3,6 +3,7 @@
     using Statistics
     using ModelingToolkit
     using ModelingToolkit: t, D
+    using OrdinaryDiffEqDefault
     using StochasticDiffEq
     using Vegetation
 
@@ -17,12 +18,12 @@ end
     # Check system creation
     @test sys isa ModelingToolkit.System
 
-    # Check equations: 7 algebraic + 4 differential = 11
+    # Check equations: 8 algebraic + 4 differential = 12
     eqs = equations(sys)
-    @test length(eqs) == 11
+    @test length(eqs) == 12
 
-    # Check unknowns: 4 state + 7 derived = 11
-    @test length(unknowns(sys)) == 11
+    # Check unknowns: 4 state + 8 derived = 12
+    @test length(unknowns(sys)) == 12
 
     # Check that the system compiles
     compiled_sys = mtkcompile(sys)
@@ -67,7 +68,7 @@ end
 
     # Check diameter growth is monotonically increasing
     dbh_vals = sol[compiled_sys.DBH]
-    @test all(diff(dbh_vals) .>= -1e-15)  # allowing tiny numerical noise
+    @test all(diff(dbh_vals) .>= -1.0e-15)  # allowing tiny numerical noise
 end
 
 @testitem "Equation Verification - Height Growth" setup = [StagePrognosisSetup] tags = [:stage_prognosis] begin
@@ -92,7 +93,7 @@ end
 
     # Height should be monotonically increasing
     ht_vals = sol[compiled_sys.HT]
-    @test all(diff(ht_vals) .>= -1e-15)
+    @test all(diff(ht_vals) .>= -1.0e-15)
 end
 
 @testitem "Crown Ratio Development" setup = [StagePrognosisSetup] tags = [:stage_prognosis] begin
@@ -112,7 +113,7 @@ end
 
     # Crown base height should increase (crown recedes)
     hcb_vals = sol[compiled_sys.HCB]
-    @test all(diff(hcb_vals) .>= -1e-15)
+    @test all(diff(hcb_vals) .>= -1.0e-15)
 
     # With CCF < 125, crown recession = 1/5 of height growth
     # So crown ratio should generally increase (height grows faster than crown recedes)
@@ -221,10 +222,18 @@ end
     prob = SDEProblem(compiled_sys, [], tspan)
 
     # Higher site index should produce more growth
-    prob_low_si = remake(prob; p = [compiled_sys.σ_growth => 0.0,
-        compiled_sys.SI => 50.0 * one_foot])
-    prob_high_si = remake(prob; p = [compiled_sys.σ_growth => 0.0,
-        compiled_sys.SI => 100.0 * one_foot])
+    prob_low_si = remake(
+        prob; p = [
+            compiled_sys.σ_growth => 0.0,
+            compiled_sys.SI => 50.0 * one_foot,
+        ]
+    )
+    prob_high_si = remake(
+        prob; p = [
+            compiled_sys.σ_growth => 0.0,
+            compiled_sys.SI => 100.0 * one_foot,
+        ]
+    )
 
     sol_low = solve(prob_low_si, EM(), dt = one_year / 10)
     sol_high = solve(prob_high_si, EM(), dt = one_year / 10)
@@ -241,14 +250,63 @@ end
     prob = SDEProblem(compiled_sys, [], tspan)
 
     # Higher CCF (more competition) should reduce growth
-    prob_low_ccf = remake(prob; p = [compiled_sys.σ_growth => 0.0,
-        compiled_sys.CCF => 50.0])
-    prob_high_ccf = remake(prob; p = [compiled_sys.σ_growth => 0.0,
-        compiled_sys.CCF => 200.0])
+    prob_low_ccf = remake(
+        prob; p = [
+            compiled_sys.σ_growth => 0.0,
+            compiled_sys.CCF => 50.0,
+        ]
+    )
+    prob_high_ccf = remake(
+        prob; p = [
+            compiled_sys.σ_growth => 0.0,
+            compiled_sys.CCF => 200.0,
+        ]
+    )
 
     sol_low = solve(prob_low_ccf, EM(), dt = one_year / 10)
     sol_high = solve(prob_high_ccf, EM(), dt = one_year / 10)
 
     # Less competition (lower CCF) should produce larger DBH
     @test sol_low[compiled_sys.DBH][end] > sol_high[compiled_sys.DBH][end]
+end
+
+@testitem "HCB Prediction Equation" setup = [StagePrognosisSetup] tags = [:stage_prognosis] begin
+    # Test the static HCB prediction equation from Stage (1973, p. 16)
+    # HCB = -29.26 + 0.61*HT + 9.178*ln(CCF) - 0.222*EL - 5.80*DBH/RMSQD + HAB
+
+    sys = StagePrognosisHCB()
+    @test sys isa ModelingToolkit.System
+
+    compiled_sys = mtkcompile(sys)
+
+    # Test with default parameters (HT=60ft, DBH=6in, CCF=100, EL=43 hundreds of feet, RMSQD=7in)
+    # HCB = -29.26 + 0.61*60 + 9.178*ln(100) - 0.222*43 - 5.80*6/7 + 0.0
+    #      = -29.26 + 36.6 + 42.26 - 9.55 - 4.97 + 0 = 35.08 feet
+    prob = ODEProblem(compiled_sys, [], (0.0, 1.0))
+    sol = solve(prob)
+    hcb_ft = sol[compiled_sys.HCB_pred][1] / one_foot
+
+    # Verify result is in a physically reasonable range
+    @test 25.0 < hcb_ft < 45.0  # Crown base should be between 25-45 ft for a 60ft tree
+
+    # Verify that taller trees have higher crown base
+    prob_tall = remake(
+        prob; p = [compiled_sys.HT_input => 80.0 * one_foot]
+    )
+    sol_tall = solve(prob_tall)
+    @test sol_tall[compiled_sys.HCB_pred][1] > sol[compiled_sys.HCB_pred][1]
+
+    # Verify that higher CCF (more competition) raises crown base
+    prob_dense = remake(
+        prob; p = [compiled_sys.CCF => 200.0]
+    )
+    sol_dense = solve(prob_dense)
+    @test sol_dense[compiled_sys.HCB_pred][1] > sol[compiled_sys.HCB_pred][1]
+
+    # Verify that larger trees relative to mean (DBH/RMSQD > 1) have lower crown base
+    prob_large = remake(
+        prob; p = [compiled_sys.DBH_input => 10.0 * one_inch]
+    )
+    sol_large = solve(prob_large)
+    @test sol_large[compiled_sys.HCB_pred][1] < sol[compiled_sys.HCB_pred][1]
 end

@@ -21,6 +21,21 @@
         G_a = 6.0,
         T_0 = 298.15,     # K
     )
+
+    # Physical constants for registered function calls
+    const T_REF_VISC = 293.15  # K
+    const RHO_REF_1000 = 1000.0  # kg/m³
+    const C_S = 840.0  # J/(kg·K)
+    const RHO_L = 1000.0  # kg/m³
+    const C_L = 4187.0  # J/(kg·K)
+    const M_W = 0.018015  # kg/mol
+    const R_GAS = 8.314  # J/(mol·K)
+    const G_ACC = 9.81  # m/s²
+    const T_REF_273 = 273.15  # K
+    const L_0 = 2.45e6  # J/kg
+    const C_V = 1864.0  # J/(kg·K)
+    const SIGMA_COEFF1 = 7.275e-2  # N/m
+    const SIGMA_COEFF2 = 0.002  # 1/K
 end
 
 @testitem "SoilVaporTransfer - Structural Verification" setup = [VaporTransferSetup] tags = [:vapor_transfer] begin
@@ -107,55 +122,55 @@ end
 
     # --- Hydraulic conductivity (Table 1) ---
     θ_val = _vt_theta(h, IDA.h_a, IDA.θ_s, IDA.b_camp)
-    μ_ratio = exp(1808.5 * (1.0 / 293.15 - 1.0 / T))
+    μ_ratio = exp(1808.5 * (1.0 / T_REF_VISC - 1.0 / T))
     K_expected = μ_ratio * (θ_val / IDA.θ_s)^IDA.p_K * IDA.K_s
     @test isapprox(
-        _vt_K(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.K_s, IDA.p_K),
+        _vt_K(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.K_s, IDA.p_K, T_REF_VISC),
         K_expected, rtol = 1.0e-10
     )
     # K should be positive and less than K_s for unsaturated soil
     @test 0 < K_expected < IDA.K_s * 2  # allow for viscosity correction
 
     # --- Thermal conductivity Lu et al. (2014) (Table 1) ---
-    ρ_b_gcm3 = IDA.ρ_b / 1000.0
+    ρ_b_gcm3 = IDA.ρ_b / RHO_REF_1000
     lam_dry = -0.56 * IDA.f_clay + 0.51
     alpha = 0.67 * IDA.f_clay + 0.24
     beta = 1.97 * IDA.f_sand + 1.87 * ρ_b_gcm3 - 1.36 * IDA.f_sand * ρ_b_gcm3 - 0.95
     λ_expected = lam_dry + exp(beta - θ_val^(-alpha))
     @test isapprox(
-        _vt_lambda(h, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.f_sand, IDA.f_clay, IDA.ρ_b),
+        _vt_lambda(h, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.f_sand, IDA.f_clay, IDA.ρ_b, RHO_REF_1000),
         λ_expected, rtol = 1.0e-10
     )
     # λ should be in reasonable range for soil (0.1 to 3 W/(m·K))
     @test 0.1 < λ_expected < 3.0
 
     # --- Volumetric heat capacity ---
-    Cv_expected = IDA.ρ_b * 840.0 + θ_val * 1000.0 * 4187.0
-    @test isapprox(_vt_Cv(h, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.ρ_b), Cv_expected, rtol = 1.0e-10)
+    Cv_expected = IDA.ρ_b * C_S + θ_val * RHO_L * C_L
+    @test isapprox(_vt_Cv(h, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.ρ_b, C_S, RHO_L, C_L), Cv_expected, rtol = 1.0e-10)
     # C_v should be in reasonable range (1e5 to 4e6 J/(m³·K))
     @test 1.0e5 < Cv_expected < 4.0e6
 
     # --- D_mv: vapor diffusion under h gradient ---
-    D_mv_val = _vt_Dmv(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp)
+    D_mv_val = _vt_Dmv(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp, M_W, R_GAS, G_ACC, RHO_L, T_REF_273)
     # D_mv should be positive and much smaller than K
     @test D_mv_val > 0
     @test D_mv_val < K_expected * 10  # vapor diffusion < liquid flow
 
     # --- D_Tv: vapor diffusion under T gradient ---
-    D_Tv_val = _vt_DTv(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp)
+    D_Tv_val = _vt_DTv(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp, M_W, R_GAS, G_ACC, RHO_L, T_REF_273, L_0)
     # D_Tv should be positive (vapor moves from warm to cold)
     @test D_Tv_val > 0
 
     # --- D_tl: liquid thermal diffusion (Eq. A3) ---
-    D_tl_val = _vt_Dtl(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.K_s, IDA.p_K, IDA.G_a, IDA.S_a)
+    D_tl_val = _vt_Dtl(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.K_s, IDA.p_K, IDA.G_a, IDA.S_a, T_REF_VISC, RHO_L, G_ACC, SIGMA_COEFF1, SIGMA_COEFF2)
     # D_tl should be positive and finite
     @test D_tl_val > 0
     @test isfinite(D_tl_val)
 
     # --- Vapor heat factor ---
-    vheat = _vt_vapor_heat(T, IDA.T_0)
+    vheat = _vt_vapor_heat(T, IDA.T_0, L_0, C_V, RHO_L)
     # At T = T_0, should be L_0 * ρ_l = 2.45e6 * 1000 = 2.45e9
-    @test isapprox(vheat, 2.45e6 * 1000.0, rtol = 1.0e-6)
+    @test isapprox(vheat, L_0 * RHO_L, rtol = 1.0e-6)
 end
 
 @testitem "SoilVaporTransfer - Constitutive Relation Monotonicity" setup = [VaporTransferSetup] tags = [:vapor_transfer] begin
@@ -169,14 +184,14 @@ end
     end
 
     # K should increase as h increases (wetter = more conductive)
-    K_values = [_vt_K(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.K_s, IDA.p_K) for h in h_values]
+    K_values = [_vt_K(h, T, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.K_s, IDA.p_K, T_REF_VISC) for h in h_values]
     for i in 2:length(K_values)
         @test K_values[i] > K_values[i - 1]
     end
 
     # λ should increase with θ (wetter soil conducts heat better)
     λ_values = [
-        _vt_lambda(h, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.f_sand, IDA.f_clay, IDA.ρ_b)
+        _vt_lambda(h, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.f_sand, IDA.f_clay, IDA.ρ_b, RHO_REF_1000)
             for h in h_values
     ]
     for i in 2:length(λ_values)
@@ -186,7 +201,7 @@ end
     # K should increase with temperature (lower viscosity)
     T_values = [278.15, 288.15, 298.15, 308.15, 318.15]  # K
     K_T = [
-        _vt_K(-1.0, T_val, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.K_s, IDA.p_K)
+        _vt_K(-1.0, T_val, IDA.h_a, IDA.θ_s, IDA.b_camp, IDA.K_s, IDA.p_K, T_REF_VISC)
             for T_val in T_values
     ]
     for i in 2:length(K_T)

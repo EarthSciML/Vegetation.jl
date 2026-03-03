@@ -43,7 +43,11 @@ https://doi.org/10.1016/j.jhydrol.2022.127541
         M_w = 0.018015, [description = "Molar mass of water", unit = u"kg/mol"]
         R_gas = 8.314, [description = "Universal gas constant", unit = u"J/(mol*K)"]
         T_ref_visc = 293.15, [description = "Reference temperature for viscosity", unit = u"K"]
+        T_ref_273 = 273.15, [description = "Reference temperature 273.15 K", unit = u"K"]
         c_s = 840.0, [description = "Specific heat of mineral soil", unit = u"J/(kg*K)"]
+        rho_ref_1000 = 1000.0, [description = "Reference density 1000 kg/m³", unit = u"kg/m^3"]
+        sigma_coeff1 = 7.275e-2, [description = "Surface tension coefficient 1", unit = u"N/m"]
+        sigma_coeff2 = 0.002, [description = "Surface tension coefficient 2", unit = u"1/K"]
         one_m = 1.0, [description = "Unit length", unit = u"m"]
         one_Pa = 1.0, [description = "Unit pressure", unit = u"Pa"]
         one_K = 1.0, [description = "Unit temperature", unit = u"K"]
@@ -195,75 +199,76 @@ _vt_theta(h, h_a, theta_s, b) = theta_s * (h / h_a)^(-1.0 / b)
 _vt_C_theta(h, h_a, theta_s, b) = -theta_s / (b * h_a) * (h / h_a)^(-1.0 / b - 1.0)
 
 # Hydraulic conductivity [m/s equivalent]
-_vt_K(h, T, h_a, theta_s, b, K_s, p_K) = begin
+_vt_K(h, T, h_a, theta_s, b, K_s, p_K, T_ref_visc) = begin
     theta = theta_s * (h / h_a)^(-1.0 / b)
-    mu_ratio = exp(1808.5 * (1.0 / 293.15 - 1.0 / T))
+    mu_ratio = exp(1808.5 * (1.0 / T_ref_visc - 1.0 / T))
     mu_ratio * (theta / theta_s)^p_K * K_s
 end
 
 # Thermal conductivity [W/(m·K) equivalent]
-_vt_lambda(h, h_a, theta_s, b, f_sand, f_clay, rho_b) = begin
+_vt_lambda(h, h_a, theta_s, b, f_sand, f_clay, rho_b, rho_ref) = begin
     theta = theta_s * (h / h_a)^(-1.0 / b)
+    # Lu et al. (2014) coefficients
     lam_dry = -0.56 * f_clay + 0.51
     alpha = 0.67 * f_clay + 0.24
-    beta = 1.97 * f_sand + 1.87 * rho_b / 1000.0 - 1.36 * f_sand * rho_b / 1000.0 - 0.95
+    beta = 1.97 * f_sand + 1.87 * (rho_b / rho_ref) - 1.36 * f_sand * (rho_b / rho_ref) - 0.95
     lam_dry + exp(beta - theta^(-alpha))
 end
 
 # Volumetric heat capacity [J/(m³·K) equivalent]
-_vt_Cv(h, h_a, theta_s, b, rho_b) = begin
+_vt_Cv(h, h_a, theta_s, b, rho_b, c_s, rho_l, c_l) = begin
     theta = theta_s * (h / h_a)^(-1.0 / b)
-    rho_b * 840.0 + theta * 1000.0 * 4187.0
+    rho_b * c_s + theta * rho_l * c_l
 end
 
 # Vapor diffusion coefficient under h gradient [m/s equivalent]
-_vt_Dmv(h, T, h_a, theta_s, b) = begin
+_vt_Dmv(h, T, h_a, theta_s, b, M_w, R_gas, g_acc, rho_l, T_ref_273) = begin
     theta = theta_s * (h / h_a)^(-1.0 / b)
     theta_a = theta_s - theta
-    D_a = 2.12e-5 * (T / 273.15)^1.75
-    Pvs = 611.2 * exp(17.67 * (T - 273.15) / (T - 29.65))
-    rho_vs = 0.018015 * Pvs / (8.314 * T)
-    h_r = exp(0.018015 * 9.81 * h / (8.314 * T))
-    D_a * theta_a * (rho_vs / 1000.0) * (0.018015 * 9.81 / (8.314 * T)) * h_r
+    D_a = 2.12e-5 * (T / T_ref_273)^1.75
+    Pvs = 611.2 * exp(17.67 * (T - T_ref_273) / (T - 29.65))
+    rho_vs = M_w * Pvs / (R_gas * T)
+    h_r = exp(M_w * g_acc * h / (R_gas * T))
+    D_a * theta_a * (rho_vs / rho_l) * (M_w * g_acc / (R_gas * T)) * h_r
 end
 
 # Vapor diffusion coefficient under T gradient [m²/(s·K) equivalent]
-_vt_DTv(h, T, h_a, theta_s, b) = begin
+_vt_DTv(h, T, h_a, theta_s, b, M_w, R_gas, g_acc, rho_l, T_ref_273, L_0) = begin
     theta = theta_s * (h / h_a)^(-1.0 / b)
     theta_a = theta_s - theta
-    D_a = 2.12e-5 * (T / 273.15)^1.75
-    Pvs = 611.2 * exp(17.67 * (T - 273.15) / (T - 29.65))
-    rho_vs = 0.018015 * Pvs / (8.314 * T)
-    h_r = exp(0.018015 * 9.81 * h / (8.314 * T))
-    drho_dT = rho_vs * (2.45e6 * 0.018015 / (8.314 * T * T) - 1.0 / T)
-    D_a * theta_a * (h_r / 1000.0) * drho_dT
+    D_a = 2.12e-5 * (T / T_ref_273)^1.75
+    Pvs = 611.2 * exp(17.67 * (T - T_ref_273) / (T - 29.65))
+    rho_vs = M_w * Pvs / (R_gas * T)
+    h_r = exp(M_w * g_acc * h / (R_gas * T))
+    drho_dT = rho_vs * (L_0 * M_w / (R_gas * T * T) - 1.0 / T)
+    D_a * theta_a * (h_r / rho_l) * drho_dT
 end
 
 # Liquid thermal diffusion coefficient [m²/(s·K) equivalent]
-_vt_Dtl(h, T, h_a, theta_s, b, K_s, p_K, G_a, S_a) = begin
-    K_val = _vt_K(h, T, h_a, theta_s, b, K_s, p_K)
-    dsigma_dT = -7.275e-2 * 0.002  # N/(m·K)
-    K_val * G_a * (S_a / (1000.0 * 9.81)) * dsigma_dT
+_vt_Dtl(h, T, h_a, theta_s, b, K_s, p_K, G_a, S_a, T_ref_visc, rho_l, g_acc, sigma_coeff1, sigma_coeff2) = begin
+    K_val = _vt_K(h, T, h_a, theta_s, b, K_s, p_K, T_ref_visc)
+    dsigma_dT = -sigma_coeff1 * sigma_coeff2  # N/(m·K)
+    K_val * G_a * (S_a / (rho_l * g_acc)) * dsigma_dT
 end
 
 # Convective heat coefficient: c_l * ρ_l * K [J/(m²·K) equivalent]
-_vt_clrhoK(h, T, h_a, theta_s, b, K_s, p_K) = begin
-    4187.0 * 1000.0 * _vt_K(h, T, h_a, theta_s, b, K_s, p_K)
+_vt_clrhoK(h, T, h_a, theta_s, b, K_s, p_K, T_ref_visc, c_l, rho_l) = begin
+    c_l * rho_l * _vt_K(h, T, h_a, theta_s, b, K_s, p_K, T_ref_visc)
 end
 
 # Vapor heat factor: (L_0 + c_v*(T-T_0)) * ρ_l (for vapor heat flux)
-_vt_vapor_heat(T, T_0) = (2.45e6 + 1864.0 * (T - T_0)) * 1000.0
+_vt_vapor_heat(T, T_0, L_0, c_v, rho_l) = (L_0 + c_v * (T - T_0)) * rho_l
 
 @register_symbolic _vt_theta(h, h_a, theta_s, b)
 @register_symbolic _vt_C_theta(h, h_a, theta_s, b)
-@register_symbolic _vt_K(h, T, h_a, theta_s, b, K_s, p_K)
-@register_symbolic _vt_lambda(h, h_a, theta_s, b, f_sand, f_clay, rho_b)
-@register_symbolic _vt_Cv(h, h_a, theta_s, b, rho_b)
-@register_symbolic _vt_Dmv(h, T, h_a, theta_s, b)
-@register_symbolic _vt_DTv(h, T, h_a, theta_s, b)
-@register_symbolic _vt_Dtl(h, T, h_a, theta_s, b, K_s, p_K, G_a, S_a)
-@register_symbolic _vt_clrhoK(h, T, h_a, theta_s, b, K_s, p_K)
-@register_symbolic _vt_vapor_heat(T, T_0)
+@register_symbolic _vt_K(h, T, h_a, theta_s, b, K_s, p_K, T_ref_visc)
+@register_symbolic _vt_lambda(h, h_a, theta_s, b, f_sand, f_clay, rho_b, rho_ref)
+@register_symbolic _vt_Cv(h, h_a, theta_s, b, rho_b, c_s, rho_l, c_l)
+@register_symbolic _vt_Dmv(h, T, h_a, theta_s, b, M_w, R_gas, g_acc, rho_l, T_ref_273)
+@register_symbolic _vt_DTv(h, T, h_a, theta_s, b, M_w, R_gas, g_acc, rho_l, T_ref_273, L_0)
+@register_symbolic _vt_Dtl(h, T, h_a, theta_s, b, K_s, p_K, G_a, S_a, T_ref_visc, rho_l, g_acc, sigma_coeff1, sigma_coeff2)
+@register_symbolic _vt_clrhoK(h, T, h_a, theta_s, b, K_s, p_K, T_ref_visc, c_l, rho_l)
+@register_symbolic _vt_vapor_heat(T, T_0, L_0, c_v, rho_l)
 
 """
 $(TYPEDSIGNATURES)
@@ -386,9 +391,14 @@ function SoilVaporTransferPDE(
 
     # Non-dimensionalized calls to registered functions
     C_θθ = _vt_C_theta(h / one_m_ref, h_a / one_m_ref, θ_s, b_camp) * one_inv_m_ref
-    K_val = _vt_K(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_ms_ref
-    λ_val = _vt_lambda(h / one_m_ref, h_a / one_m_ref, θ_s, b_camp, f_sand, f_clay, ρ_b / one_kgm3_ref) * one_WmK_ref
-    C_TT = _vt_Cv(h / one_m_ref, h_a / one_m_ref, θ_s, b_camp, ρ_b / one_kgm3_ref) * one_Jm3K_ref
+    K_val = _vt_K(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K, T_0 / one_K_ref) * one_ms_ref
+    λ_val = _vt_lambda(h / one_m_ref, h_a / one_m_ref, θ_s, b_camp, f_sand, f_clay, ρ_b / one_kgm3_ref, one_kgm3_ref) * one_WmK_ref
+    @constants begin
+        c_s_val = 840.0, [description = "Specific heat of mineral soil for PDE", unit = u"J/(kg*K)"]
+        rho_l_val = 1000.0, [description = "Density of liquid water for PDE", unit = u"kg/m^3"]
+        c_l_val = 4187.0, [description = "Specific heat of liquid water for PDE", unit = u"J/(kg*K)"]
+    end
+    C_TT = _vt_Cv(h / one_m_ref, h_a / one_m_ref, θ_s, b_camp, ρ_b / one_kgm3_ref, c_s_val, rho_l_val, c_l_val) * one_Jm3K_ref
 
     if include_vapor
         @constants begin
@@ -398,11 +408,22 @@ function SoilVaporTransferPDE(
             one_Jm3_ref = 1.0, [unit = u"J/m^3"]
         end
 
-        D_mv = _vt_Dmv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp) * one_ms_ref2
-        D_Tv = _vt_DTv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp) * one_m2sK_ref
-        D_tl = _vt_Dtl(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K, G_a, S_a / one_m2m3_ref) * one_m2sK_ref
-        clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_Jm2K_ref
-        vap_heat = _vt_vapor_heat(T / one_K_ref, T_0 / one_K_ref) * one_Jm3_ref
+        @constants begin
+            M_w_val = 0.018015, [description = "Molar mass of water for PDE", unit = u"kg/mol"]
+            R_gas_val = 8.314, [description = "Universal gas constant for PDE", unit = u"J/(mol*K)"]
+            g_acc_val = 9.81, [description = "Gravitational acceleration for PDE", unit = u"m/s^2"]
+            T_ref_273_val = 273.15, [description = "Reference temperature 273.15 K for PDE", unit = u"K"]
+            L_0_val = 2.45e6, [description = "Latent heat of vaporization for PDE", unit = u"J/kg"]
+            c_v_val = 1864.0, [description = "Specific heat of water vapor for PDE", unit = u"J/(kg*K)"]
+            sigma_coeff1_val = 7.275e-2, [description = "Surface tension coefficient 1 for PDE", unit = u"N/m"]
+            sigma_coeff2_val = 0.002, [description = "Surface tension coefficient 2 for PDE", unit = u"1/K"]
+        end
+
+        D_mv = _vt_Dmv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, M_w_val, R_gas_val, g_acc_val, rho_l_val, T_ref_273_val) * one_ms_ref2
+        D_Tv = _vt_DTv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, M_w_val, R_gas_val, g_acc_val, rho_l_val, T_ref_273_val, L_0_val) * one_m2sK_ref
+        D_tl = _vt_Dtl(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K, G_a, S_a / one_m2m3_ref, T_0 / one_K_ref, rho_l_val, g_acc_val, sigma_coeff1_val, sigma_coeff2_val) * one_m2sK_ref
+        clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K, T_0 / one_K_ref, c_l_val, rho_l_val) * one_Jm2K_ref
+        vap_heat = _vt_vapor_heat(T / one_K_ref, T_0 / one_K_ref, L_0_val, c_v_val, rho_l_val) * one_Jm3_ref
 
         # Water equation (Eq. 2a' - M_simp)
         water_flux = (D_mv + K_val) * h_x + (D_Tv + D_tl) * T_x
@@ -415,8 +436,12 @@ function SoilVaporTransferPDE(
         heat_vapor_flux = vap_heat * vapor_flux
         heat_eq = D(T) ~ (1 / C_TT) * (Dx(heat_cond) + Dx(heat_liq_flux) + Dx(heat_vapor_flux))
     else
-        @constants one_Jm2K_ref2 = 1.0, [unit = u"J/(m^2*K)"]
-        clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_Jm2K_ref2
+        @constants begin
+            one_Jm2K_ref2 = 1.0, [unit = u"J/(m^2*K)"]
+            c_l_val_2 = 4187.0, [description = "Specific heat of liquid water for M_prel", unit = u"J/(kg*K)"]
+            rho_l_val_2 = 1000.0, [description = "Density of liquid water for M_prel", unit = u"kg/m^3"]
+        end
+        clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K, T_0 / one_K_ref, c_l_val_2, rho_l_val_2) * one_Jm2K_ref2
 
         # M_prel (Eq. 1) - no vapor transfer
         water_eq = D(h) ~ (1 / C_θθ) * Dx(K_val * h_x) # Eq. 1a

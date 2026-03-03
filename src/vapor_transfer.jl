@@ -103,16 +103,18 @@ https://doi.org/10.1016/j.jhydrol.2022.127541
     eqs = [
         # --- Constitutive relations ---
         # Water retention - Campbell model (Table 1): θ = θ_s * (h/h_a)^(-1/b)
-        θ ~ θ_s * (h_soil / h_a)^(-1 / b_camp), # Eq. from Table 1
+        # Use dimensionless ratio to avoid fractional power issues
+        θ ~ θ_s * (h_soil / one_m / (h_a / one_m))^(-1 / b_camp), # Eq. from Table 1
 
         # Specific moisture capacity C_θθ = dθ/dh
-        C_θθ ~ -θ_s / (b_camp * h_a) * (h_soil / h_a)^(-1 / b_camp - 1), # Derivative of θ(h)
+        C_θθ ~ -θ_s / (b_camp * h_a) * (h_soil / one_m / (h_a / one_m))^(-1 / b_camp - 1), # Derivative of θ(h)
 
-        # Viscosity ratio μ(T_0)/μ(T)
-        μ_ratio ~ exp(1808.5 * (one_K / T_ref_visc - one_K / T_soil)), # Table 1
+        # Viscosity ratio μ(T_0)/μ(T) (dimensionless)
+        μ_ratio ~ exp(1808.5 * (1.0 / (T_ref_visc / one_K) - 1.0 / (T_soil / one_K))), # Table 1
 
         # Hydraulic conductivity (Table 1): K = μ_ratio * (θ/θ_s)^p_K * K_s
-        K_h ~ μ_ratio * (θ / θ_s)^p_K * K_s, # Table 1
+        # Use dimensionless ratio to avoid fractional power issues
+        K_h ~ μ_ratio * (θ / θ_one / (θ_s / θ_one))^p_K * K_s, # Table 1
 
         # Thermal conductivity - Lu et al. (2014) (Table 1)
         # λ = {λ_dry + exp(β - θ^(-α))} [W/(m·K)]
@@ -138,13 +140,14 @@ https://doi.org/10.1016/j.jhydrol.2022.127541
 
         # --- Vapor transport coefficients (Philip & de Vries, 1957) ---
         # Vapor diffusion coefficient in air: D_a = 2.12e-5 * (T/273.15)^1.75 [m²/s]
-        D_atm ~ 2.12e-5 * one_m2s * (T_soil / (273.15 * one_K))^1.75, # Philip & de Vries (1957)
+        # Use dimensionless temperature ratio
+        D_atm ~ 2.12e-5 * one_m2s * ((T_soil / one_K) / 273.15)^1.75, # Philip & de Vries (1957)
 
         # Saturated vapor density: ρ_vs = M_w * P_vs / (R * T)
-        # P_vs = 611.2 * exp(17.67 * (T-273.15) / (T-29.65)) [Pa]
+        # P_vs = 611.2 * exp(17.67 * (T-273.15) / (T-29.65)) [Pa] (Tetens equation)
         ρ_vs ~ (M_w / (R_gas * T_soil)) *
             611.2 * one_Pa *
-            exp(17.67 * (T_soil / one_K - 273.15) / (T_soil / one_K - 29.65)), # Tetens
+            exp(17.67 * ((T_soil / one_K) - 273.15) / ((T_soil / one_K) - 29.65)), # Tetens
 
         # Relative humidity from Kelvin equation: h_r = exp(M_w * g * h / (R * T))
         h_rel ~ exp(M_w * g_acc * h_soil / (R_gas * T_soil)), # Kelvin equation

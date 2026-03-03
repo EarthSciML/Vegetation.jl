@@ -52,6 +52,7 @@ https://doi.org/10.1016/j.jhydrol.2022.127541
         one_m2s = 1.0, [description = "Unit diffusivity", unit = u"m^2/s"]
         one_Nm = 1.0, [description = "Unit surface tension", unit = u"N/m"]
         one_NmK = 1.0, [description = "Unit surface tension per K", unit = u"N/(m*K)"]
+        θ_one = 1.0, [description = "Unit volumetric water content", unit = u"1"]
     end
 
     @parameters begin
@@ -117,6 +118,7 @@ https://doi.org/10.1016/j.jhydrol.2022.127541
         # λ = {λ_dry + exp(β - θ^(-α))} [W/(m·K)]
         # λ_dry = -0.56*f_clay + 0.51, α = 0.67*f_clay + 0.24
         # β = 1.97*f_sand + 1.87*(ρ_b[g/cm³]) - 1.36*f_sand*(ρ_b[g/cm³]) - 0.95
+        # Use dimensionless θ to avoid fractional power issues
         λ_soil ~ (
             (-0.56 * f_clay + 0.51) +
                 exp(
@@ -124,7 +126,7 @@ https://doi.org/10.1016/j.jhydrol.2022.127541
                     1.97 * f_sand + 1.87 * (ρ_b / one_kgm3) / 1000.0 -
                         1.36 * f_sand * (ρ_b / one_kgm3) / 1000.0 - 0.95
                 ) -
-                    θ^(-(0.67 * f_clay + 0.24))
+                    (θ / θ_one)^(-(0.67 * f_clay + 0.24))
             )
         ) * one_WmK, # Table 1, Lu et al. (2014)
 
@@ -164,11 +166,11 @@ https://doi.org/10.1016/j.jhydrol.2022.127541
         ), # Eq. 2a
 
         # --- Liquid thermal diffusion coefficient (Eq. A3) ---
-        # Water surface tension (Eq. A1): σ = -7.275e-2 * [1 - 0.002*(T-291)] [N/m]
-        σ_surf ~ -7.275e-2 * one_Nm * (1 - 0.002 * (T_soil / one_K - 291.0)), # Eq. A1
+        # Water surface tension (Eq. A1): σ = 7.275e-2 * [1 - 0.002*(T-291)] [N/m]
+        σ_surf ~ 7.275e-2 * one_Nm * (1 - 0.002 * (T_soil / one_K - 291.0)), # Eq. A1
 
         # dσ/dT (derivative of Eq. A1)
-        dσ_dT ~ 7.275e-2 * 0.002 * one_NmK, # Eq. A1 derivative
+        dσ_dT ~ -7.275e-2 * 0.002 * one_NmK, # Eq. A1 derivative
 
         # D_tl = K * G_a * (S_a / (ρ_l * g)) * (dσ/dT) (Eq. A3)
         D_tl ~ K_h * G_a * (S_a / (ρ_l * g_acc)) * dσ_dT, # Eq. A3
@@ -237,7 +239,7 @@ end
 # Liquid thermal diffusion coefficient [m²/(s·K) equivalent]
 _vt_Dtl(h, T, h_a, theta_s, b, K_s, p_K, G_a, S_a) = begin
     K_val = _vt_K(h, T, h_a, theta_s, b, K_s, p_K)
-    dsigma_dT = 7.275e-2 * 0.002  # N/(m·K)
+    dsigma_dT = -7.275e-2 * 0.002  # N/(m·K)
     K_val * G_a * (S_a / (1000.0 * 9.81)) * dsigma_dT
 end
 
@@ -376,6 +378,7 @@ function SoilVaporTransferPDE(
         one_Jm3K_ref = 1.0, [unit = u"J/(m^3*K)"]
         one_inv_m_ref = 1.0, [unit = u"1/m"]
         one_m2m3_ref = 1.0, [unit = u"m^2/m^3"]
+        one_m2s_ref = 1.0, [unit = u"m^2/s"]
     end
 
     # Non-dimensionalized calls to registered functions
@@ -386,13 +389,13 @@ function SoilVaporTransferPDE(
 
     if include_vapor
         @constants begin
-            one_ms_ref = 1.0, [unit = u"m/s"]
+            one_ms_ref2 = 1.0, [unit = u"m/s"]
             one_m2sK_ref = 1.0, [unit = u"m^2/(s*K)"]
             one_Jm2K_ref = 1.0, [unit = u"J/(m^2*K)"]
             one_Jm3_ref = 1.0, [unit = u"J/m^3"]
         end
 
-        D_mv = _vt_Dmv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp) * one_ms_ref
+        D_mv = _vt_Dmv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp) * one_ms_ref2
         D_Tv = _vt_DTv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp) * one_m2sK_ref
         D_tl = _vt_Dtl(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K, G_a, S_a / one_m2m3_ref) * one_m2sK_ref
         clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_Jm2K_ref
@@ -404,13 +407,13 @@ function SoilVaporTransferPDE(
 
         # Heat equation (Eq. 2b' - M_simp)
         heat_cond = λ_val * T_x
-        heat_liq = clrhoK * h_x * (T - T_0)
+        heat_liq_flux = clrhoK * h_x * (T - T_0)
         vapor_flux = D_mv * h_x + D_Tv * T_x
-        heat_vapor = vap_heat * vapor_flux
-        heat_eq = D(T) ~ (1 / C_TT) * (Dx(heat_cond) + Dx(heat_liq) + Dx(heat_vapor))
+        heat_vapor_flux = vap_heat * vapor_flux
+        heat_eq = D(T) ~ (1 / C_TT) * (Dx(heat_cond) + Dx(heat_liq_flux) + Dx(heat_vapor_flux))
     else
-        @constants one_Jm2K_ref = 1.0, [unit = u"J/(m^2*K)"]
-        clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_Jm2K_ref
+        @constants one_Jm2K_ref2 = 1.0, [unit = u"J/(m^2*K)"]
+        clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_Jm2K_ref2
 
         # M_prel (Eq. 1) - no vapor transfer
         water_eq = D(h) ~ (1 / C_θθ) * Dx(K_val * h_x) # Eq. 1a

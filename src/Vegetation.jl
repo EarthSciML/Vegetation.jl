@@ -26,5 +26,6 @@ include("stage_prognosis.jl")
 export StagePrognosis, StagePrognosisHCB
 
 include("vapor_transfer.jl")
+export SoilVaporTransfer, SoilVaporTransferPDE
 
 end

@@ -20,15 +20,15 @@ end
     vars = unknowns(sys)
     eqs = equations(sys)
 
-    # 2 state variables (Y, M) + 15 algebraic variables = 17 unknowns
-    @test length(vars) == 17
-    @test length(eqs) == 17
+    # 2 state variables (Y, M) + 16 algebraic variables = 18 unknowns / equations
+    @test length(vars) == 18
+    @test length(eqs) == 18
 
     # Verify key variable names exist
     var_names = [string(v) for v in vars]
     for expected in [
             "Y(t)", "M(t)", "f1(t)", "f2(t)", "f3(t)", "f4(t)",
-            "R_bar(t)", "D_eff(t)",
+            "R_bar(t)", "D_eff_xx(t)", "D_eff_zz(t)",
         ]
         @test any(n -> contains(n, expected), var_names)
     end
@@ -52,14 +52,147 @@ end
     # Verify A_growth = 0.55/day in SI (s⁻¹)
     @test pdict[:A_growth] ≈ 0.55 / one_day rtol = 1.0e-6
 
-    # Verify D0_xx = 50 cm²/day in SI (m²/s)
+    # Verify D0_xx = 50 cm²/day in SI (m²/s) — horizontal diffusivity
     @test pdict[:D0_xx] ≈ 50.0 * one_cm2_day rtol = 1.0e-6
+
+    # Verify D0_zz = 3 cm²/day in SI (m²/s) — vertical diffusivity
+    # Note: D0_zz is defined but not used in the ODE form (only needed for PDE),
+    # so check it on the uncompiled system's parameters instead.
+    sys_params = parameters(MaizeRootGrowth())
+    sys_pdict = Dict(
+        Symbol(p) => ModelingToolkit.getdefault(p) for p in sys_params
+            if ModelingToolkit.hasdefault(p)
+    )
+    @test sys_pdict[:D0_zz] ≈ 3.0 * one_cm2_day rtol = 1.0e-6
 
     # Verify soil temperature default = 298 K
     @test pdict[:T_soil] ≈ 298.0 rtol = 1.0e-6
 
     # Verify bulk density default = 1380 kg/m³
     @test pdict[:ρ_b] ≈ 1380.0 rtol = 1.0e-6
+end
+
+@testitem "MaizeRootGrowth: Equation Verification - f₁" setup = [MaizeRootSetup] tags = [:maize] begin
+    # Verify f₁ against hand-computed reference values from Eq. 1
+    # f₁ = (1/2)(ψ_trd - 5.4|ψ|^0.25·exp(-10.58(1.7-ρ_b))) - (1/4)(ψ_trd - ψ)
+    # where ψ_trd, ψ in bar and ρ_b in Mg/m³
+
+    sys = MaizeRootGrowth()
+    compiled = mtkcompile(sys)
+
+    # Test case: default conditions (ψ_rtd=5bar, ψ_soil=-0.3bar, ρ_b=1.38 Mg/m³)
+    tspan = (0.0, 1.0)  # very short, just evaluate
+    prob = ODEProblem(compiled, [], tspan)
+    sol = solve(prob)
+
+    # Hand-compute f₁ with defaults:
+    # ψ_trd_bar = 5.0e5/1.0e5 = 5.0
+    # ψ_soil_bar = -3.0e4/1.0e5 = -0.3
+    # ρ_b_Mg = 1380/1000 = 1.38
+    psi_trd = 5.0
+    psi_s = -0.3
+    rho = 1.38
+    f1_expected = 0.5 * (psi_trd - 5.4 * abs(psi_s)^0.25 * exp(-10.58 * (1.7 - rho))) -
+        0.25 * (psi_trd - psi_s)
+    f1_expected = clamp(f1_expected, 0.0, 1.0)
+
+    @test sol[compiled.f1][1] ≈ f1_expected rtol = 1.0e-6
+end
+
+@testitem "MaizeRootGrowth: Equation Verification - f₂" setup = [MaizeRootSetup] tags = [:maize] begin
+    # Verify f₂ temperature favorability
+    sys = MaizeRootGrowth()
+    compiled = mtkcompile(sys)
+    tspan = (0.0, 1.0)
+
+    # At 25°C (298K): 18 ≤ 25 < 33, so f₂ = 1.0
+    prob = ODEProblem(compiled, [], tspan, [compiled.T_soil => 298.0])
+    sol = solve(prob)
+    @test sol[compiled.f2][1] ≈ 1.0 rtol = 1.0e-6
+
+    # At 10°C (283.15K): f₂ = (10/18)^1.66
+    prob_cold = ODEProblem(compiled, [], tspan, [compiled.T_soil => 283.15])
+    sol_cold = solve(prob_cold)
+    f2_expected = (10.0 / 18.0)^1.66
+    @test sol_cold[compiled.f2][1] ≈ f2_expected rtol = 1.0e-3
+
+    # At 40°C (313.15K): f₂ = (40/33)^(-1.66)
+    prob_hot = ODEProblem(compiled, [], tspan, [compiled.T_soil => 313.15])
+    sol_hot = solve(prob_hot)
+    f2_expected_hot = (40.0 / 33.0)^(-1.66)
+    @test sol_hot[compiled.f2][1] ≈ f2_expected_hot rtol = 1.0e-3
+end
+
+@testitem "MaizeRootGrowth: Equation Verification - f₃" setup = [MaizeRootSetup] tags = [:maize] begin
+    # Verify f₃ aeration favorability
+    # f₃ = ([O₂] - 0.02)^7.14 where [O₂] in mol/L
+    sys = MaizeRootGrowth()
+    compiled = mtkcompile(sys)
+    tspan = (0.0, 1.0)
+
+    # Default: O2_soil = 1020 mol/m³ = 1.02 mol/L → f₃ = (1.0)^7.14 = 1.0
+    prob = ODEProblem(compiled, [], tspan)
+    sol = solve(prob)
+    @test sol[compiled.f3][1] ≈ 1.0 rtol = 1.0e-6
+
+    # Low O₂: 100 mol/m³ = 0.1 mol/L → f₃ = (0.08)^7.14
+    prob_low = ODEProblem(compiled, [], tspan, [compiled.O2_soil => 100.0])
+    sol_low = solve(prob_low)
+    f3_expected = (0.1 - 0.02)^7.14
+    @test sol_low[compiled.f3][1] ≈ f3_expected rtol = 1.0e-3
+end
+
+@testitem "MaizeRootGrowth: Equation Verification - f₄" setup = [MaizeRootSetup] tags = [:maize] begin
+    # Verify f₄ root density favorability
+    # f₄ = 1 - min(1, (M+Y)/0.03)
+    sys = MaizeRootGrowth()
+    compiled = mtkcompile(sys)
+    tspan = (0.0, 1.0)
+
+    # Default: Y=0.001, M=0.0, total=0.001 → f₄ = 1 - 0.001/0.03 ≈ 0.9667
+    prob = ODEProblem(compiled, [], tspan)
+    sol = solve(prob)
+    f4_expected = 1.0 - 0.001 / 0.03
+    @test sol[compiled.f4][1] ≈ f4_expected rtol = 1.0e-4
+
+    # High density: Y=0.001, M=0.028, total=0.029 → f₄ = 1 - 0.029/0.03 ≈ 0.0333
+    prob_high = ODEProblem(compiled, [compiled.Y => 0.001, compiled.M => 0.028], tspan)
+    sol_high = solve(prob_high)
+    f4_high = 1.0 - 0.029 / 0.03
+    @test sol_high[compiled.f4][1] ≈ f4_high rtol = 1.0e-3
+
+    # Above threshold: Y=0.001, M=0.03, total=0.031 → f₄ = 0
+    prob_over = ODEProblem(compiled, [compiled.Y => 0.001, compiled.M => 0.03], tspan)
+    sol_over = solve(prob_over)
+    @test sol_over[compiled.f4][1] ≈ 0.0 atol = 1.0e-10
+end
+
+@testitem "MaizeRootGrowth: Equation Verification - f̃₁(ψ)" setup = [MaizeRootSetup] tags = [:maize] begin
+    # Verify f̃₁ water potential factor for diffusion (Eq. 4)
+    # f̃₁(ψ) = 0.5*sin(π*(ψ-(ψ_s+ψ_r)/2)/(ψ_s-ψ_r)) + 0.5
+    # ψ_s = -150 cm, ψ_r = -500 cm, midpoint = -325 cm
+    sys = MaizeRootGrowth()
+    compiled = mtkcompile(sys)
+    tspan = (0.0, 1.0)
+
+    # At ψ_soil corresponding to -325 cm head (midpoint):
+    # -325 cm × 98.0665 Pa/cm = -31871.6 Pa
+    psi_mid_Pa = -325.0 * 98.0665
+    prob_mid = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_mid_Pa])
+    sol_mid = solve(prob_mid)
+    @test sol_mid[compiled.f_tilde_psi][1] ≈ 0.5 rtol = 1.0e-3
+
+    # At ψ_soil corresponding to -150 cm head (wet limit, ψ_s):
+    psi_wet_Pa = -150.0 * 98.0665
+    prob_wet = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_wet_Pa])
+    sol_wet = solve(prob_wet)
+    @test sol_wet[compiled.f_tilde_psi][1] ≈ 1.0 rtol = 1.0e-3
+
+    # At ψ_soil corresponding to -500 cm head (dry limit, ψ_r):
+    psi_dry_Pa = -500.0 * 98.0665
+    prob_dry = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_dry_Pa])
+    sol_dry = solve(prob_dry)
+    @test sol_dry[compiled.f_tilde_psi][1] ≈ 0.0 atol = 1.0e-3
 end
 
 @testitem "MaizeRootGrowth: Basic Integration" setup = [MaizeRootSetup] tags = [:maize] begin

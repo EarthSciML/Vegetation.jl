@@ -82,7 +82,7 @@ end
 
     # Test case: default conditions (ψ_rtd=5bar, ψ_soil=-0.3bar, ρ_b=1.38 Mg/m³)
     tspan = (0.0, 1.0)  # very short, just evaluate
-    prob = ODEProblem(compiled, [], tspan)
+    prob = ODEProblem(compiled, Dict(), tspan)
     sol = solve(prob)
 
     # Hand-compute f₁ with defaults:
@@ -106,18 +106,18 @@ end
     tspan = (0.0, 1.0)
 
     # At 25°C (298K): 18 ≤ 25 < 33, so f₂ = 1.0
-    prob = ODEProblem(compiled, [], tspan, [compiled.T_soil => 298.0])
+    prob = ODEProblem(compiled, Dict(compiled.T_soil => 298.0), tspan)
     sol = solve(prob)
     @test sol[compiled.f2][1] ≈ 1.0 rtol = 1.0e-6
 
     # At 10°C (283.15K): f₂ = (10/18)^1.66
-    prob_cold = ODEProblem(compiled, [], tspan, [compiled.T_soil => 283.15])
+    prob_cold = ODEProblem(compiled, Dict(compiled.T_soil => 283.15), tspan)
     sol_cold = solve(prob_cold)
     f2_expected = (10.0 / 18.0)^1.66
     @test sol_cold[compiled.f2][1] ≈ f2_expected rtol = 1.0e-3
 
     # At 40°C (313.15K): f₂ = (40/33)^(-1.66)
-    prob_hot = ODEProblem(compiled, [], tspan, [compiled.T_soil => 313.15])
+    prob_hot = ODEProblem(compiled, Dict(compiled.T_soil => 313.15), tspan)
     sol_hot = solve(prob_hot)
     f2_expected_hot = (40.0 / 33.0)^(-1.66)
     @test sol_hot[compiled.f2][1] ≈ f2_expected_hot rtol = 1.0e-3
@@ -131,12 +131,12 @@ end
     tspan = (0.0, 1.0)
 
     # Default: O2_soil = 1020 mol/m³ = 1.02 mol/L → f₃ = (1.0)^7.14 = 1.0
-    prob = ODEProblem(compiled, [], tspan)
+    prob = ODEProblem(compiled, Dict(), tspan)
     sol = solve(prob)
     @test sol[compiled.f3][1] ≈ 1.0 rtol = 1.0e-6
 
     # Low O₂: 100 mol/m³ = 0.1 mol/L → f₃ = (0.08)^7.14
-    prob_low = ODEProblem(compiled, [], tspan, [compiled.O2_soil => 100.0])
+    prob_low = ODEProblem(compiled, Dict(compiled.O2_soil => 100.0), tspan)
     sol_low = solve(prob_low)
     f3_expected = (0.1 - 0.02)^7.14
     @test sol_low[compiled.f3][1] ≈ f3_expected rtol = 1.0e-3
@@ -150,19 +150,19 @@ end
     tspan = (0.0, 1.0)
 
     # Default: Y=0.001, M=0.0, total=0.001 → f₄ = 1 - 0.001/0.03 ≈ 0.9667
-    prob = ODEProblem(compiled, [], tspan)
+    prob = ODEProblem(compiled, Dict(), tspan)
     sol = solve(prob)
     f4_expected = 1.0 - 0.001 / 0.03
     @test sol[compiled.f4][1] ≈ f4_expected rtol = 1.0e-4
 
     # High density: Y=0.001, M=0.028, total=0.029 → f₄ = 1 - 0.029/0.03 ≈ 0.0333
-    prob_high = ODEProblem(compiled, [compiled.Y => 0.001, compiled.M => 0.028], tspan)
+    prob_high = ODEProblem(compiled, Dict(compiled.Y => 0.001, compiled.M => 0.028), tspan)
     sol_high = solve(prob_high)
     f4_high = 1.0 - 0.029 / 0.03
     @test sol_high[compiled.f4][1] ≈ f4_high rtol = 1.0e-3
 
     # Above threshold: Y=0.001, M=0.03, total=0.031 → f₄ = 0
-    prob_over = ODEProblem(compiled, [compiled.Y => 0.001, compiled.M => 0.03], tspan)
+    prob_over = ODEProblem(compiled, Dict(compiled.Y => 0.001, compiled.M => 0.03), tspan)
     sol_over = solve(prob_over)
     @test sol_over[compiled.f4][1] ≈ 0.0 atol = 1.0e-10
 end
@@ -178,19 +178,19 @@ end
     # At ψ_soil corresponding to -325 cm head (midpoint):
     # -325 cm × 98.0665 Pa/cm = -31871.6 Pa
     psi_mid_Pa = -325.0 * 98.0665
-    prob_mid = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_mid_Pa])
+    prob_mid = ODEProblem(compiled, Dict(compiled.ψ_soil => psi_mid_Pa), tspan)
     sol_mid = solve(prob_mid)
     @test sol_mid[compiled.f_tilde_psi][1] ≈ 0.5 rtol = 1.0e-3
 
     # At ψ_soil corresponding to -150 cm head (wet limit, ψ_s):
     psi_wet_Pa = -150.0 * 98.0665
-    prob_wet = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_wet_Pa])
+    prob_wet = ODEProblem(compiled, Dict(compiled.ψ_soil => psi_wet_Pa), tspan)
     sol_wet = solve(prob_wet)
     @test sol_wet[compiled.f_tilde_psi][1] ≈ 1.0 rtol = 1.0e-3
 
     # At ψ_soil corresponding to -500 cm head (dry limit, ψ_r):
     psi_dry_Pa = -500.0 * 98.0665
-    prob_dry = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_dry_Pa])
+    prob_dry = ODEProblem(compiled, Dict(compiled.ψ_soil => psi_dry_Pa), tspan)
     sol_dry = solve(prob_dry)
     @test sol_dry[compiled.f_tilde_psi][1] ≈ 0.0 atol = 1.0e-3
 end
@@ -204,7 +204,7 @@ end
     # Under default optimal conditions (f₁≈1, f₂=1, f₃≈1, f₄≈0.967):
     # f_min ≈ f₄ ≈ 0.967
     # R̄ = (0.001 + 0.0) × (0.55/86400) × 0.967 ≈ 6.155e-9 kg/m³/s
-    prob = ODEProblem(compiled, [], tspan)
+    prob = ODEProblem(compiled, Dict(), tspan)
     sol = solve(prob)
 
     A_val = 0.55 / one_day
@@ -219,7 +219,7 @@ end
 
     # 30-day simulation
     tspan = (0.0, 30.0 * one_day)
-    prob = ODEProblem(compiled, [], tspan)
+    prob = ODEProblem(compiled, Dict(), tspan)
     sol = solve(prob)
 
     @test sol.retcode == SciMLBase.ReturnCode.Success
@@ -236,7 +236,7 @@ end
     compiled = mtkcompile(sys)
 
     tspan = (0.0, 10.0 * one_day)
-    prob = ODEProblem(compiled, [], tspan)
+    prob = ODEProblem(compiled, Dict(), tspan)
     sol = solve(prob)
 
     @test sol.retcode == SciMLBase.ReturnCode.Success
@@ -264,9 +264,8 @@ end
     tspan = (0.0, 100.0 * one_day)
     prob = ODEProblem(
         compiled,
-        [],
-        tspan,
-        [compiled.R_total => R_val, compiled.T_YM => T_YM_val]
+        Dict(compiled.R_total => R_val, compiled.T_YM => T_YM_val),
+        tspan
     )
     sol = solve(prob)
 
@@ -293,16 +292,18 @@ end
 
     # At 25°C (298K), f2 should be 1.0
     prob_optimal = ODEProblem(
-        compiled, [], tspan,
-        [compiled.T_soil => 298.0]
+        compiled,
+        Dict(compiled.T_soil => 298.0),
+        tspan
     )
     sol_optimal = solve(prob_optimal)
     @test sol_optimal.retcode == SciMLBase.ReturnCode.Success
 
     # At 10°C (283K), f2 should be < 1
     prob_cold = ODEProblem(
-        compiled, [], tspan,
-        [compiled.T_soil => 283.0]
+        compiled,
+        Dict(compiled.T_soil => 283.0),
+        tspan
     )
     sol_cold = solve(prob_cold)
     @test sol_cold.retcode == SciMLBase.ReturnCode.Success
@@ -322,7 +323,7 @@ end
     tspan = (0.0, 10.0 * one_day)
     prob_high = ODEProblem(
         compiled,
-        [compiled.Y => 0.001, compiled.M => 0.028],
+        Dict(compiled.Y => 0.001, compiled.M => 0.028),
         tspan
     )
     sol_high = solve(prob_high)
@@ -330,7 +331,7 @@ end
     # Start with low initial root density
     prob_low = ODEProblem(
         compiled,
-        [compiled.Y => 0.001, compiled.M => 0.0],
+        Dict(compiled.Y => 0.001, compiled.M => 0.0),
         tspan
     )
     sol_low = solve(prob_low)
@@ -356,7 +357,7 @@ end
     # Test with very small initial Y
     prob = ODEProblem(
         compiled,
-        [compiled.Y => 1.0e-8, compiled.M => 0.0],
+        Dict(compiled.Y => 1.0e-8, compiled.M => 0.0),
         tspan
     )
     sol = solve(prob)
@@ -375,7 +376,7 @@ end
     tspan = (0.0, 1.0)
 
     # Under default conditions, f̃₂ ≈ 1.0 (temperature factor is essentially always 1)
-    prob = ODEProblem(compiled, [], tspan)
+    prob = ODEProblem(compiled, Dict(), tspan)
     sol = solve(prob)
     @test sol[compiled.f_tilde_T][1] ≈ 1.0 rtol = 1.0e-6
 
@@ -385,13 +386,13 @@ end
 
     # At the dry limit (ψ_r = -500 cm), f̃₁ ≈ 0
     psi_dry_Pa = -500.0 * 98.0665
-    prob_dry = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_dry_Pa])
+    prob_dry = ODEProblem(compiled, Dict(compiled.ψ_soil => psi_dry_Pa), tspan)
     sol_dry = solve(prob_dry)
     @test sol_dry[compiled.f_tilde_psi][1] ≈ 0.0 atol = 1.0e-6
 
     # At the wet limit (ψ_s = -150 cm), f̃₁ ≈ 1
     psi_wet_Pa = -150.0 * 98.0665
-    prob_wet = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_wet_Pa])
+    prob_wet = ODEProblem(compiled, Dict(compiled.ψ_soil => psi_wet_Pa), tspan)
     sol_wet = solve(prob_wet)
     @test sol_wet[compiled.f_tilde_psi][1] ≈ 1.0 atol = 1.0e-6
 end

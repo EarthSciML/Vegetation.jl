@@ -68,6 +68,7 @@ simulations (Sections 3.2 and 4 of the paper, from Zhao et al. 2018):
 | van Genuchten n | 1.30 | 1.26 | 1.28 | 1.20 | 1.38 |
 | Sat. Hydraulic Conductivity K_s (cm/day) | 140.30 | 144.70 | 155.80 | 170.50 | 122.60 |
 | Soil Bulk Density ρ_b (g/cm³) | 1.38 | 1.37 | 1.39 | 1.38 | 1.44 |
+| Soil Organic Matter (g/g) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
 | Sand Fraction (g/g) | 0.40 | 0.40 | 0.42 | 0.38 | 0.49 |
 | Silt Fraction (g/g) | 0.36 | 0.36 | 0.39 | 0.37 | 0.33 |
 
@@ -81,6 +82,20 @@ results for the example in Section 3.2 of the paper:
 | Observed Precipitation | 9138 | 23,563 | 12,760 | 10,802 | 0.85 | 350 | 344 |
 | Observed Precip. + Irrigation | 12,209 | 24,029 | 16,017 | 8011 | 0.50 | 419 | 456 |
 | 50% Observed Precipitation | 6689 | 23,215 | 9555 | 13,660 | 1.43 | 238 | 167 |
+
+### RFRH Management Results (Table 3 from Wang et al. 2021)
+
+The following table reproduces Table 3 from the paper, showing the simulated maize growth
+and evaporation-transpiration for Ridge-Furrow Rainfall Harvest (RFRH) management compared
+to flat soil surface. These results were produced using the full 2D PDE diffusive root model
+coupled with the MAIZSIM simulator and cannot be reproduced with the local ODE form implemented here.
+
+| Soil Surface | Treatment | Yield (kg/ha) | Total Dry Mass (kg/ha) | Shoot Dry Mass (kg/ha) | Root Dry Mass (kg/ha) | Root/Shoot | Evaporation (mm) | Transpiration (mm) |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Flat Soil | Observed Precip. | 9138 | 23,563 | 12,760 | 10,802 | 0.85 | 350 | 344 |
+| RFRH, No Cover | No Cover | 9256 | 27,485 | 13,884 | 13,601 | 0.98 | 125 | 294 |
+| RFRH, Plastic | Plastic Cover | 9334 | 26,437 | 14,817 | 11,620 | 0.78 | 76 | 320 |
+| RFRH, Fine Soil | Fine-texture Soil Cover | 9426 | 25,821 | 14,471 | 11,350 | 0.78 | 109 | 321 |
 
 ```@example maize_root
 using ModelingToolkit, Vegetation, DynamicQuantities, Symbolics, DataFrames
@@ -130,7 +145,7 @@ using OrdinaryDiffEqDefault, Plots
 
 compiled = mtkcompile(sys)
 tspan = (0.0, 90.0 * 86400.0)  # 90 days in seconds
-prob = ODEProblem(compiled, [], tspan)
+prob = ODEProblem(compiled, Dict(), tspan)
 sol = solve(prob)
 
 days = sol.t ./ 86400.0
@@ -183,7 +198,7 @@ p = plot(xlabel="Time (days)", ylabel="Total root density (g/m³)",
     title="Temperature Effect on Root Growth (Eq. 1, f₂)", legend=:topleft)
 
 for (T, lab) in zip(T_vals, T_labels)
-    prob_T = ODEProblem(compiled, [], tspan, [compiled.T_soil => T])
+    prob_T = ODEProblem(compiled, Dict(compiled.T_soil => T), tspan)
     sol_T = solve(prob_T)
     days = sol_T.t ./ 86400.0
     total = (sol_T[compiled.Y] .+ sol_T[compiled.M]) .* 1000
@@ -207,7 +222,7 @@ p = plot(xlabel="Time (days)", ylabel="Total root density (g/m³)",
     title="Bulk Density Effect on Root Growth (Eq. 1, f₁)", legend=:topleft)
 
 for rho in rho_vals
-    prob_rho = ODEProblem(compiled, [], tspan, [compiled.ρ_b => rho])
+    prob_rho = ODEProblem(compiled, Dict(compiled.ρ_b => rho), tspan)
     sol_rho = solve(prob_rho)
     days = sol_rho.t ./ 86400.0
     total = (sol_rho[compiled.Y] .+ sol_rho[compiled.M]) .* 1000
@@ -230,7 +245,7 @@ p = plot(xlabel="Time (days)", ylabel="Total root density (g/m³)",
     title="Root Density Self-Limitation (Eq. 1, f₄)", legend=:topleft)
 
 for M0 in M_init_vals
-    prob_m = ODEProblem(compiled, [compiled.Y => 0.001, compiled.M => M0], tspan)
+    prob_m = ODEProblem(compiled, Dict(compiled.Y => 0.001, compiled.M => M0), tspan)
     sol_m = solve(prob_m)
     days = sol_m.t ./ 86400.0
     total = (sol_m[compiled.Y] .+ sol_m[compiled.M]) .* 1000
@@ -253,7 +268,7 @@ psi_Pa_vals = psi_cm_vals .* 98.0665  # Convert to Pa
 f_psi_vals = Float64[]
 tspan = (0.0, 1.0)
 for psi_Pa in psi_Pa_vals
-    prob_p = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_Pa])
+    prob_p = ODEProblem(compiled, Dict(compiled.ψ_soil => psi_Pa), tspan)
     sol_p = solve(prob_p)
     push!(f_psi_vals, sol_p[compiled.f_tilde_psi][1])
 end

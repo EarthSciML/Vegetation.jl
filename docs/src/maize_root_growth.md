@@ -71,6 +71,17 @@ simulations (Sections 3.2 and 4 of the paper, from Zhao et al. 2018):
 | Sand Fraction (g/g) | 0.40 | 0.40 | 0.42 | 0.38 | 0.49 |
 | Silt Fraction (g/g) | 0.36 | 0.36 | 0.39 | 0.37 | 0.33 |
 
+### Maize Yield and Water Balance (Table 2 from Wang et al. 2021)
+
+The following table reproduces the simulated maize growth and evaporation-transpiration
+results for the example in Section 3.2 of the paper:
+
+| Treatment | Yield (kg/ha) | Total Dry Mass (kg/ha) | Shoot Dry Mass (kg/ha) | Root Dry Mass (kg/ha) | Root/Shoot Ratio | Evaporation (mm/cm²) | Transpiration (mm/cm²) |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Observed Precipitation | 9138 | 23,563 | 12,760 | 10,802 | 0.85 | 350 | 344 |
+| Observed Precip. + Irrigation | 12,209 | 24,029 | 16,017 | 8011 | 0.50 | 419 | 456 |
+| 50% Observed Precipitation | 6689 | 23,215 | 9555 | 13,660 | 1.43 | 238 | 167 |
+
 ```@example maize_root
 using ModelingToolkit, Vegetation, DynamicQuantities, Symbolics, DataFrames
 
@@ -132,12 +143,36 @@ plot!(p, days, (sol[compiled.Y] .+ sol[compiled.M]) .* 1000,
 p
 ```
 
-### Effect of Temperature on Root Growth (cf. Eq. 1, f₂)
+### Temperature Favorability f₂ Response Curve (cf. Eq. 1)
 
 Temperature favorability (f₂) follows a piecewise function from Eq. 1: growth increases
 from 0 to 18°C as ``(T/18)^{1.66}``, is optimal (f₂ = 1) between 18–33°C, and decreases
-above 33°C as ``(T/33)^{-1.66}``. The following figure shows the effect of different soil
-temperatures on total root growth over 60 days.
+above 33°C as ``(T/33)^{-1.66}``. The following figure shows the f₂ curve directly as a
+function of temperature, matching the functional form in the paper.
+
+```@example maize_root
+T_celsius = 0.5:0.5:45.0
+f2_vals = Float64[]
+for Tc in T_celsius
+    if Tc < 18.0
+        push!(f2_vals, clamp((max(0.01, Tc) / 18.0)^1.66, 0.0, 1.0))
+    elseif Tc < 33.0
+        push!(f2_vals, 1.0)
+    else
+        push!(f2_vals, clamp((Tc / 33.0)^(-1.66), 0.0, 1.0))
+    end
+end
+
+p = plot(T_celsius, f2_vals, xlabel="Temperature (°C)", ylabel="f₂",
+    title="Temperature Favorability Index (Eq. 1, f₂)", linewidth=2, legend=false)
+vline!(p, [18.0, 33.0], linestyle=:dash, color=:gray)
+p
+```
+
+### Effect of Temperature on Root Growth (cf. Eq. 1, f₂)
+
+The following figure shows the effect of different soil temperatures on total root
+growth over 60 days, demonstrating how the f₂ index controls growth rates.
 
 ```@example maize_root
 T_vals = [283.0, 288.0, 293.0, 298.0, 303.0, 308.0, 313.0]  # K

@@ -17,9 +17,9 @@ diffuse spatially and mature into non-diffusing mature roots at rate T_YM.
 
 Units: The paper uses mixed units (bar, cm, Mg/m³). This implementation uses SI base
 units (Pa for pressure, m for length, kg/m³ for density, s for time). Empirical
-equations from Acock et al. (1985) are non-dimensionalized by dividing by reference
-values with appropriate units, so all empirical coefficients operate on dimensionless
-ratios.
+equations from Acock et al. (1985) use non-dimensionalized inputs obtained by dividing
+by SI reference values with appropriate units, following the non-dimensionalization
+technique for fractional powers.
 
 **Reference**: Wang, Z., Timlin, D., Li, S., Fleisher, D., Dathe, A., Luo, C., Dong, L.,
 Reddy, V.R., and Tully, K. (2021). A diffusive model of maize root growth in MAIZSIM
@@ -29,19 +29,14 @@ and its applications in Ridge-Furrow Rainfall Harvesting. *Agricultural Water Ma
 $(SIGNATURES)
 """
 @component function MaizeRootGrowth(; name = :MaizeRootGrowth)
-    # ===== Unit conversion / reference constants =====
-    # Paper uses: bar for pressure, cm for water potential head, Mg/m³ for bulk density,
-    # cm²/day for diffusivity, °C for temperature (f₂), K for temperature (f̃₂).
-    # We non-dimensionalize inputs by dividing by these reference values.
-
+    # ===== Reference constants for non-dimensionalization =====
+    # Paper uses: bar for pressure, Mg/m³ for bulk density, mol/L for concentration.
+    # We divide SI inputs by these reference values to obtain dimensionless ratios
+    # before applying the empirical formulas.
     @constants begin
-        ref_pressure = 1.0e5, [description = "Reference pressure (1 bar)", unit = u"Pa"]
-        ref_time = 86400.0, [description = "Reference time (1 day)", unit = u"s"]
-        ref_density = 1000.0, [description = "Reference density (1 Mg/m³)", unit = u"kg/m^3"]
-        ref_concentration = 1000.0, [description = "Reference concentration (1 mol/L)", unit = u"mol/m^3"]
-        ref_temperature = 1.0, [description = "Reference temperature (1 K)", unit = u"K"]
-        ref_head = 98.0665, [description = "Reference head (1 cm water = 98.0665 Pa)", unit = u"Pa"]
-        ref_diffusivity = 1.0, [description = "Reference diffusivity", unit = u"m^2/s"]
+        P_ref = 1.0e5, [description = "Reference pressure (1 bar)", unit = u"Pa"]
+        ρ_ref = 1000.0, [description = "Reference density (1 Mg/m³)", unit = u"kg/m^3"]
+        C_ref = 1000.0, [description = "Reference concentration (1 mol/L)", unit = u"mol/m^3"]
         zero_diffusivity = 0.0, [description = "Zero diffusivity", unit = u"m^2/s"]
     end
 
@@ -51,24 +46,23 @@ $(SIGNATURES)
     end
 
     # ===== Empirical constants from Eq. (1) =====
-    # These operate on non-dimensionalized inputs and are thus dimensionless.
     @constants begin
         # Penetration resistance constants (f₁, Acock et al. 1985)
-        pen_half = 0.5, [description = "Factor 1/2 in f₁ first term (dimensionless)"]
+        # f₁ = (1/2)(ψ_trd[bar] - 5.4|ψ[bar]|^0.25·exp(-10.58(1.7[Mg/m³] - ρ_b[Mg/m³]))) - (1/4)(ψ_trd[bar] - ψ[bar])
+        # After non-dimensionalization by P_ref and ρ_ref, the coefficients are dimensionless.
         pen_coeff = 5.4, [description = "Penetration resistance coefficient in f₁ (dimensionless)"]
-        pen_exp = 0.25, [description = "Exponent on |ψ| in f₁ (dimensionless)"]
+        pen_exp = 0.25, [description = "Exponent on |ψ/P_ref| in f₁ (dimensionless)"]
         pen_bd_coeff = 10.58, [description = "Bulk density coefficient in f₁ exponent (dimensionless)"]
-        pen_bd_ref = 1.7, [description = "Reference bulk density in f₁ (Mg/m³-equivalent, dimensionless)"]
-        pen_quarter = 0.25, [description = "Factor 1/4 in f₁ second term (dimensionless)"]
+        ρ_bd_crit = 1700.0, [description = "Critical bulk density in f₁ (1.7 Mg/m³)", unit = u"kg/m^3"]
 
         # Temperature favorability constants (f₂)
-        T_opt_low = 18.0, [description = "Lower optimal temperature for f₂ (°C-equivalent, dimensionless)"]
-        T_opt_high = 33.0, [description = "Upper optimal temperature for f₂ (°C-equivalent, dimensionless)"]
+        T_opt_low = 291.15, [description = "Lower optimal temperature for f₂ (18°C)", unit = u"K"]
+        T_opt_high = 306.15, [description = "Upper optimal temperature for f₂ (33°C)", unit = u"K"]
         T_exp = 1.66, [description = "Temperature exponent in f₂ (dimensionless)"]
-        T_guard = 0.01, [description = "Guard value to prevent 0^exp in f₂ (dimensionless)"]
+        T_guard = 0.01, [description = "Guard temperature difference to prevent 0^exp in f₂", unit = u"K"]
 
         # Aeration constants (f₃)
-        O2_thresh = 0.02, [description = "O₂ threshold in f₃ (mol/L-equivalent, dimensionless)"]
+        O2_thresh = 20.0, [description = "O₂ concentration threshold in f₃ (0.02 mol/L)", unit = u"mol/m^3"]
         O2_exp = 7.14, [description = "Exponent in f₃ (dimensionless)"]
 
         # Root density threshold (f₄)
@@ -77,12 +71,12 @@ $(SIGNATURES)
 
     # ===== Constants from Eq. (4) — Diffusion coefficient =====
     @constants begin
-        psi_s = -150.0, [description = "Wet limit water potential ψ_s for diffusion (cm-equivalent, dimensionless)"]
-        psi_r = -500.0, [description = "Dry limit water potential ψ_r for diffusion (cm-equivalent, dimensionless)"]
+        ψ_s_diff = -14709.975, [description = "Wet limit water potential ψ_s for diffusion (-150 cm head)", unit = u"Pa"]
+        ψ_r_diff = -49033.25, [description = "Dry limit water potential ψ_r for diffusion (-500 cm head)", unit = u"Pa"]
         T0_diff = 295.0, [description = "Reference temperature T₀ for diffusion", unit = u"K"]
         p_diff = 10000.0, [description = "Temperature parameter p in f̃₂ (dimensionless)"]
         q_diff = 1.0, [description = "Temperature parameter q in f̃₂ (dimensionless)"]
-        u_diff = 18000.0, [description = "Temperature parameter u in f̃₂ (dimensionless)"]
+        u_diff = 18000.0, [description = "Temperature parameter u in f̃₂", unit = u"K"]
     end
 
     # ===== Parameters =====
@@ -117,47 +111,34 @@ $(SIGNATURES)
         D_eff_zz(t), [description = "Effective vertical diffusion coefficient", unit = u"m^2/s"]
         f_tilde_psi(t), [description = "Water potential factor for diffusion (dimensionless)"]
         f_tilde_T(t), [description = "Temperature factor for diffusion (dimensionless)"]
-        T_celsius(t), [description = "Soil temperature in °C (dimensionless ratio)"]
-        psi_cm(t), [description = "Soil water potential in cm head (dimensionless ratio)"]
-        psi_rtd_bar(t), [description = "Root turgor pressure in bar (dimensionless ratio)"]
-        psi_soil_bar(t), [description = "Soil water potential in bar (dimensionless ratio)"]
-        rho_b_Mg(t), [description = "Bulk density in Mg/m³ (dimensionless ratio)"]
-        O2_mol_per_L(t), [description = "O₂ in mol/L (dimensionless ratio)"]
     end
 
     eqs = [
-        # --- Unit conversions to paper's units (dimensionless ratios) ---
-        T_celsius ~ (T_soil - T_freeze) / ref_temperature,      # K → °C (dimensionless)
-        psi_cm ~ ψ_soil / ref_head,                              # Pa → cm water head (dimensionless)
-        psi_rtd_bar ~ ψ_rtd / ref_pressure,                     # Pa → bar (dimensionless)
-        psi_soil_bar ~ ψ_soil / ref_pressure,                   # Pa → bar (dimensionless)
-        rho_b_Mg ~ ρ_b / ref_density,                           # kg/m³ → Mg/m³ (dimensionless)
-        O2_mol_per_L ~ O2_soil / ref_concentration,              # mol/m³ → mol/L (dimensionless)
-
         # --- Eq. (1): Favorability indices ---
 
         # f₁ - Penetration resistance (Eq. 1, Acock et al. 1985)
-        # f₁ = (1/2)(ψ_trd - 5.4|ψ|^0.25·exp(-10.58(1.7 - ρ_b))) - (1/4)(ψ_trd - ψ)
-        # Uses bar for pressure, Mg/m³ for density (via dimensionless ratios)
+        # f₁ = (1/2)(ψ_trd[bar] - 5.4|ψ[bar]|^0.25·exp(-10.58(1.7[Mg/m³] - ρ_b[Mg/m³]))) - (1/4)(ψ_trd[bar] - ψ[bar])
+        # Non-dimensionalize pressures by P_ref (1 bar) and densities by ρ_ref (1 Mg/m³)
         f1 ~ max(
             0.0, min(
                 1.0,
-                pen_half * (psi_rtd_bar - pen_coeff * abs(psi_soil_bar)^pen_exp * exp(-pen_bd_coeff * (pen_bd_ref - rho_b_Mg)))
-                    - pen_quarter * (psi_rtd_bar - psi_soil_bar)
+                0.5 * (ψ_rtd / P_ref - pen_coeff * abs(ψ_soil / P_ref)^pen_exp * exp(-pen_bd_coeff * (ρ_bd_crit - ρ_b) / ρ_ref))
+                    - 0.25 * (ψ_rtd / P_ref - ψ_soil / P_ref)
             )
         ),
 
         # f₂ - Temperature favorability (Eq. 1)
-        # Piecewise: (T/18)^1.66 for 0<T<18°C, 1 for 18≤T<33°C, (T/33)^(-1.66) for T≥33°C
+        # Piecewise: (T_C/18)^1.66 for 0<T_C<18°C, 1 for 18≤T_C<33°C, (T_C/33)^(-1.66) for T_C≥33°C
+        # Non-dimensionalize: T_C/18 = (T_soil - T_freeze)/(T_opt_low - T_freeze), giving K/K = dimensionless
         f2 ~ max(
             0.0, min(
                 1.0, ifelse(
-                    T_celsius < T_opt_low,
-                    (max(T_guard, T_celsius) / T_opt_low)^T_exp,
+                    T_soil < T_opt_low,
+                    (max(T_guard, T_soil - T_freeze) / (T_opt_low - T_freeze))^T_exp,
                     ifelse(
-                        T_celsius < T_opt_high,
+                        T_soil < T_opt_high,
                         1.0,
-                        (T_celsius / T_opt_high)^(-T_exp)
+                        ((T_soil - T_freeze) / (T_opt_high - T_freeze))^(-T_exp)
                     )
                 )
             )
@@ -165,10 +146,11 @@ $(SIGNATURES)
 
         # f₃ - Aeration / O₂ favorability (Eq. 1)
         # f₃ = ([O₂] - 0.02)^7.14 where [O₂] is in mol/L
+        # Non-dimensionalize: ([O₂] - 0.02)[mol/L] = (O2_soil - O2_thresh)/C_ref, giving (mol/m³)/(mol/m³) = dimensionless
         f3 ~ max(
             0.0, min(
                 1.0,
-                (max(0.0, O2_mol_per_L - O2_thresh))^O2_exp
+                (max(0.0, (O2_soil - O2_thresh) / C_ref))^O2_exp
             )
         ),
 
@@ -188,25 +170,28 @@ $(SIGNATURES)
 
         # f̃₁(ψ) — water potential factor for diffusion
         # f̃₁(ψ) = (1/2)sin(π(ψ - (ψ_s+ψ_r)/2) / (ψ_s - ψ_r)) + 1/2
-        # Maps ψ ∈ [ψ_r, ψ_s] to [0, 1] via sinusoidal interpolation (cm head)
+        # Work directly in Pa: (Pa - Pa)/(Pa - Pa) = dimensionless argument to sin
         f_tilde_psi ~ max(
             0.0, min(
                 1.0,
-                0.5 * sin(π * (psi_cm - (psi_s + psi_r) / 2.0) / (psi_s - psi_r)) + 0.5
+                0.5 * sin(π * (ψ_soil - (ψ_s_diff + ψ_r_diff) / 2.0) / (ψ_s_diff - ψ_r_diff)) + 0.5
             )
         ),
 
         # f̃₂(T) — temperature factor for diffusion
         # f̃₂(T) = max{[(1 + e^(p-T/T₀))·e^(T/T₀-p)] / (1 + e^(q-u/T)), 1.0}
+        # Algebraic simplification: (1+e^a)·e^(-a) = e^(-a) + 1 = 1 + e^(-a)
+        # This avoids overflow from exp(p - T/T₀) when p ≫ T/T₀.
+        # T/T₀ = K/K = dimensionless; u/T = u_diff/T_soil = K/K = dimensionless
         f_tilde_T ~ max(
             1.0,
-            ((1.0 + exp(p_diff - T_soil / T0_diff)) * exp(T_soil / T0_diff - p_diff))
-                / (1.0 + exp(q_diff - u_diff / (T_soil / ref_temperature)))
+            (1.0 + exp(T_soil / T0_diff - p_diff))
+                / (1.0 + exp(q_diff - u_diff / T_soil))
         ),
 
         # Effective diffusion coefficients (Eq. 4: D_* = D⁰_* × min{f̃₁, f̃₂})
-        D_eff_xx ~ max(zero_diffusivity, D0_xx * min(f_tilde_psi, f_tilde_T) * ref_diffusivity / ref_diffusivity),
-        D_eff_zz ~ max(zero_diffusivity, D0_zz * min(f_tilde_psi, f_tilde_T) * ref_diffusivity / ref_diffusivity),
+        D_eff_xx ~ max(zero_diffusivity, D0_xx * min(f_tilde_psi, f_tilde_T)),
+        D_eff_zz ~ max(zero_diffusivity, D0_zz * min(f_tilde_psi, f_tilde_T)),
 
         # --- Eq. (3a): Young root dynamics ---
         # ∂Y/∂t = ∇·[D∇Y] + R - T_YM·Y

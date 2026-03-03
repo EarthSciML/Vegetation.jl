@@ -20,9 +20,9 @@ end
     vars = unknowns(sys)
     eqs = equations(sys)
 
-    # 2 state variables (Y, M) + 16 algebraic variables = 18 unknowns / equations
-    @test length(vars) == 18
-    @test length(eqs) == 18
+    # 2 state variables (Y, M) + 10 algebraic variables = 12 unknowns / equations
+    @test length(vars) == 12
+    @test length(eqs) == 12
 
     # Verify key variable names exist
     var_names = [string(v) for v in vars]
@@ -195,6 +195,24 @@ end
     @test sol_dry[compiled.f_tilde_psi][1] ≈ 0.0 atol = 1.0e-3
 end
 
+@testitem "MaizeRootGrowth: Equation Verification - R̄ (Eq. 2)" setup = [MaizeRootSetup] tags = [:maize] begin
+    # Verify R̄ = (M + Y) × A × min{f₁, f₂, f₃, f₄}
+    sys = MaizeRootGrowth()
+    compiled = mtkcompile(sys)
+    tspan = (0.0, 1.0)
+
+    # Under default optimal conditions (f₁≈1, f₂=1, f₃≈1, f₄≈0.967):
+    # f_min ≈ f₄ ≈ 0.967
+    # R̄ = (0.001 + 0.0) × (0.55/86400) × 0.967 ≈ 6.155e-9 kg/m³/s
+    prob = ODEProblem(compiled, [], tspan)
+    sol = solve(prob)
+
+    A_val = 0.55 / one_day
+    f4_val = 1.0 - 0.001 / 0.03
+    R_bar_expected = 0.001 * A_val * f4_val
+    @test sol[compiled.R_bar][1] ≈ R_bar_expected rtol = 1.0e-3
+end
+
 @testitem "MaizeRootGrowth: Basic Integration" setup = [MaizeRootSetup] tags = [:maize] begin
     sys = MaizeRootGrowth()
     compiled = mtkcompile(sys)
@@ -346,4 +364,34 @@ end
     @test sol.retcode == SciMLBase.ReturnCode.Success
     @test all(sol[compiled.Y] .>= -1.0e-15)
     @test all(sol[compiled.M] .>= -1.0e-15)
+end
+
+@testitem "MaizeRootGrowth: Diffusion Factors (Eq. 4)" setup = [MaizeRootSetup] tags = [:maize] begin
+    # Verify diffusion factors f̃₁ and f̃₂ from Eq. 4
+    # D_eff = D⁰ × min(f̃₁, f̃₂) — D_eff itself is only relevant in the PDE form,
+    # but the factors are observable from the compiled ODE system.
+    sys = MaizeRootGrowth()
+    compiled = mtkcompile(sys)
+    tspan = (0.0, 1.0)
+
+    # Under default conditions, f̃₂ ≈ 1.0 (temperature factor is essentially always 1)
+    prob = ODEProblem(compiled, [], tspan)
+    sol = solve(prob)
+    @test sol[compiled.f_tilde_T][1] ≈ 1.0 rtol = 1.0e-6
+
+    # Under default ψ_soil = -3e4 Pa = ~-306 cm head (between ψ_s and ψ_r),
+    # f̃₁ should be between 0 and 1
+    @test 0.0 < sol[compiled.f_tilde_psi][1] < 1.0
+
+    # At the dry limit (ψ_r = -500 cm), f̃₁ ≈ 0
+    psi_dry_Pa = -500.0 * 98.0665
+    prob_dry = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_dry_Pa])
+    sol_dry = solve(prob_dry)
+    @test sol_dry[compiled.f_tilde_psi][1] ≈ 0.0 atol = 1.0e-6
+
+    # At the wet limit (ψ_s = -150 cm), f̃₁ ≈ 1
+    psi_wet_Pa = -150.0 * 98.0665
+    prob_wet = ODEProblem(compiled, [], tspan, [compiled.ψ_soil => psi_wet_Pa])
+    sol_wet = solve(prob_wet)
+    @test sol_wet[compiled.f_tilde_psi][1] ≈ 1.0 atol = 1.0e-6
 end

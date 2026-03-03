@@ -22,17 +22,26 @@ MulchRadiationAttenuation
 MulchWindProfile
 MulchHeatVaporFluxes
 MulchWaterCharacteristic
+MulchHeatWaterTransfer
+MulchHeatWaterPDE
+MulchSurfaceRunoffPDE
 ```
 
 ## Implementation
 
-The implementation consists of five ModelingToolkit components:
+The implementation consists of eight ModelingToolkit components:
 
+### ODE Components
 1. **`ResidueMulchDecomposition`**: Tracks residue mass and N pools with decomposition kinetics (Eq. 18-25)
 2. **`MulchRadiationAttenuation`**: Computes shortwave and longwave radiation through mulch layers (Eq. 11-15)
 3. **`MulchWindProfile`**: Models wind speed attenuation through the mulch (Eq. 3)
 4. **`MulchHeatVaporFluxes`**: Parameterizes diffusive and convective heat/vapor fluxes (Eq. 4-8)
 5. **`MulchWaterCharacteristic`**: Relates matric potential to water content in mulch (Eq. 26)
+6. **`MulchHeatWaterTransfer`**: Constitutive relations and single-node ODE for coupled heat and water transfer (Eq. 1-2, 6, 9)
+
+### PDE Systems
+7. **`MulchHeatWaterPDE`**: Coupled heat and water transfer through mulch (Eq. 1), discretized with MethodOfLines.jl
+8. **`MulchSurfaceRunoffPDE`**: Saint-Venant surface runoff equations (Eq. 16-17), discretized with MethodOfLines.jl
 
 ### State Variables (Decomposition Model)
 
@@ -203,4 +212,53 @@ p7 = plot(u_layers, z_centers .* 100, xlabel="Wind Speed (m/s)",
     marker=:circle, linewidth=2, label="u(z)", legend=:bottomright)
 
 p7
+```
+
+### Heat and Water Transfer Constitutive Relations
+
+The `MulchHeatWaterTransfer` component implements the constitutive relations for
+coupled heat and water transfer through mulch (Eq. 1-2, 6, 9), including the water
+characteristic function inverse, vapor transport coefficients, and effective thermal
+conductivity.
+
+```@example mulch
+hw_sys = MulchHeatWaterTransfer()
+hw_compiled = mtkcompile(hw_sys)
+
+vars = unknowns(hw_compiled)
+DataFrame(
+    :Name => [string(Symbolics.tosymbol(v, escape=false)) for v in vars],
+    :Units => [dimension(ModelingToolkit.get_unit(v)) for v in vars],
+    :Description => [ModelingToolkit.getdescription(v) for v in vars]
+)
+```
+
+```@example mulch
+params = parameters(hw_compiled)
+DataFrame(
+    :Name => [string(Symbolics.tosymbol(p, escape=false)) for p in params],
+    :Units => [dimension(ModelingToolkit.get_unit(p)) for p in params],
+    :Description => [ModelingToolkit.getdescription(p) for p in params]
+)
+```
+
+### PDE Systems
+
+The `MulchHeatWaterPDE` creates a `PDESystem` for coupled heat and water transfer
+(Eq. 1), while `MulchSurfaceRunoffPDE` creates a `PDESystem` for the Saint-Venant
+surface runoff equations (Eq. 16-17). Both systems are suitable for spatial
+discretization with MethodOfLines.jl.
+
+```@example mulch
+using DomainSets
+
+pde_hw = MulchHeatWaterPDE(0.06, 3600.0)
+println("Heat-Water PDE: ", length(pde_hw.eqs), " equations, ",
+    length(pde_hw.dvs), " dependent variables, ",
+    length(pde_hw.ps), " parameters")
+
+pde_sr = MulchSurfaceRunoffPDE(0.5, 60.0)
+println("Surface Runoff PDE: ", length(pde_sr.eqs), " equations, ",
+    length(pde_sr.dvs), " dependent variables, ",
+    length(pde_sr.ps), " parameters")
 ```

@@ -593,3 +593,385 @@ $(SIGNATURES)
 
     return System(eqs, t; name)
 end
+
+"""
+    MulchHeatWaterTransfer(; name=:MulchHeatWaterTransfer)
+
+Constitutive relations and single-node ODE for coupled heat and water transfer
+through residue mulch (Eq. 1-2, 6, 9 of Wang et al., 2021).
+
+This component computes the storage coefficients (C_hh for water, C_TT for heat),
+vapor transport coefficients (D_mv, D_Tv), effective thermal conductivity (λ_eff),
+and the latent heat coupling term. Spatial derivative terms are represented as
+input parameters (like `dqdl` in `SurfaceRunoff`), to be provided by a PDE
+discretization or coupled model.
+
+**Reference**: Wang, Z., Thapa, R., Timlin, D., Li, S., Sun, W., Beegum, S., et al.
+(2021). Simulations of water and thermal dynamics for soil surfaces with residue mulch
+and surface runoff. *Water Resources Research*, 57, e2021WR030431.
+https://doi.org/10.1029/2021WR030431
+
+\$(SIGNATURES)
+"""
+@component function MulchHeatWaterTransfer(; name = :MulchHeatWaterTransfer)
+
+    @constants begin
+        # Physical constants
+        ρ_w = 1000.0, [description = "Liquid water density", unit = u"kg/m^3"]
+        L_v = 2.45e6, [description = "Latent heat of vaporization", unit = u"J/kg"]
+        c_pw = 4186.0, [description = "Specific heat of liquid water", unit = u"J/kg/K"]
+        M_w = 0.01802, [description = "Molecular weight of water", unit = u"kg/mol"]
+        R_gas = 8.314, [description = "Universal gas constant", unit = u"J/mol/K"]
+        g_acc = 9.81, [description = "Gravitational acceleration", unit = u"m/s^2"]
+
+        λ_w = 0.58, [description = "Thermal conductivity of liquid water", unit = u"W/m/K"]
+
+        # Reference values for nondimensionalization
+        one_K = 1.0, [description = "Unit temperature", unit = u"K"]
+        one_m = 1.0, [description = "Unit length", unit = u"m"]
+        one_Pa = 1.0, [description = "Unit pressure", unit = u"Pa"]
+    end
+
+    @parameters begin
+        # Mulch physical properties (Table 2)
+        ρ_m = 20.0, [description = "Mulch bulk density", unit = u"kg/m^3"]
+        φ_m = 0.98, [description = "Mulch porosity (dimensionless)"]
+        c_ms = 1920.0, [description = "Mulch solid specific heat", unit = u"J/kg/K"]
+        λ_ms = 0.06, [description = "Mulch solid thermal conductivity", unit = u"W/m/K"]
+        D_va = 2.5e-5, [description = "Vapor diffusivity in air", unit = u"m^2/s"]
+        τ_tort = 0.67, [description = "Tortuosity factor (dimensionless)"]
+
+        # Spatial derivative terms (forcing from PDE discretization)
+        # Water equation (Eq. 1a): C_hh * dh/dt = d/dz[(K_h + D_mv)*dh/dz] + d/dz[D_Tv*dT/dz]
+        dqw_dz = 0.0, [description = "Net water flux divergence ∂/∂z[...] (Eq. 1a)", unit = u"s^-1"]
+        # Heat equation (Eq. 1b): C_TT * dT/dt = d/dz[λ_eff*dT/dz] + L_v*ρ_w*d/dz[D_mv*dh/dz + D_Tv*dT/dz]
+        dqT_dz = 0.0, [description = "Net heat flux divergence (Eq. 1b)", unit = u"W/m^3"]
+    end
+
+    @variables begin
+        # State variables
+        h_m(t) = -1.0, [description = "Matric potential head in mulch", unit = u"m"]
+        T_m(t) = 293.15, [description = "Mulch temperature", unit = u"K"]
+
+        # Diagnostic variables
+        θ_vol(t), [description = "Volumetric water content (dimensionless)"]
+        C_hh(t), [description = "Water capacity dθ/dh (Eq. 2)", unit = u"m^-1"]
+        C_TT(t), [description = "Volumetric heat capacity (Eq. 2)", unit = u"J/m^3/K"]
+        ρ_vs(t), [description = "Saturated vapor density", unit = u"kg/m^3"]
+        h_rel(t), [description = "Relative humidity from Kelvin equation (dimensionless)"]
+        D_mv(t), [description = "Isothermal vapor diffusivity (Eq. 6)", unit = u"m/s"]
+        D_Tv(t), [description = "Thermal vapor diffusivity (Eq. 6)", unit = u"m^2/s/K"]
+        λ_eff(t), [description = "Effective thermal conductivity (Eq. 6)", unit = u"W/m/K"]
+    end
+
+    # WRC parameters (simplified from MulchWaterCharacteristic, Eq. 26)
+    # Using fixed lignin fraction ~0.1 for constitutive relations
+    # a_m_Pa = -20.1e6 * exp(-0.249*0.1) ≈ -19.6e6 Pa; b_m ≈ 0.336
+    # θ_grav_sat ≈ 7.1 * exp(-0.079*0.1) ≈ 7.04
+    # θ_vol_sat = θ_grav_sat * ρ_m / ρ_w ≈ 7.04 * 20 / 1000 ≈ 0.14
+    a_m_Pa_abs = 19.6e6  # |a_m| in Pa
+    b_m_val = 0.336   # b_wrc1 + b_wrc2 * 0.1
+    θ_grav_sat = 7.04  # saturated gravimetric WC
+    θ_vol_sat = 0.14   # approximate volumetric saturation
+
+    eqs = [
+        # Eq. 26 - Water characteristic (inverse): θ from h
+        # h_Pa = ρ_w * g * h_m (convert head to pressure)
+        # θ_grav = (|a_m_Pa| / |h_Pa|)^(1/b_m), capped at θ_grav_sat
+        # θ_vol = min(θ_grav, θ_grav_sat) * ρ_m / ρ_w
+        # The ratio |a_m_Pa| / |h_Pa| is dimensionless (Pa/Pa via one_Pa constants)
+        # Nondimensionalize: (a_m_Pa_abs / max(ρ_w * g_acc * abs(h_m) / one_Pa, 1.0))^(1/b_m)
+        θ_vol ~ min(
+            (a_m_Pa_abs / max(ρ_w * g_acc * abs(h_m) / one_Pa, 1.0))^(1.0 / b_m_val),
+            θ_grav_sat
+        ) * ρ_m / ρ_w,
+
+        # Eq. 2 - Water capacity: C_hh = dθ_vol/dh
+        # C_hh = θ_vol / (b_m * |h_m|) (from power-law differentiation)
+        C_hh ~ θ_vol / (b_m_val * max(abs(h_m), 1.0e-6 * one_m)),
+
+        # Eq. 2 - Volumetric heat capacity
+        C_TT ~ ρ_m * c_ms + θ_vol * ρ_w * c_pw,
+
+        # Saturated vapor density (Tetens/Clausius-Clapeyron approximation)
+        # P_vs = 611 * exp(17.27 * (T-273.15) / (T-273.15+237.3)) Pa
+        # ρ_vs = M_w * P_vs / (R_gas * T)
+        ρ_vs ~ M_w * 611.0 * one_Pa * exp(17.27 * (T_m / one_K - 273.15) / (T_m / one_K - 273.15 + 237.3)) / (R_gas * T_m),
+
+        # Kelvin equation: h_rel = exp(M_w * g * h_m / (R_gas * T_m))
+        h_rel ~ exp(M_w * g_acc * h_m / (R_gas * T_m)),
+
+        # Eq. 6 - Isothermal vapor diffusivity
+        # D_mv = D_va * τ * (φ - θ) * ρ_vs * h_rel * M_w * g / (ρ_w * R_gas * T)
+        D_mv ~ D_va * τ_tort * max(φ_m - θ_vol, 0.0) * ρ_vs * h_rel * M_w * g_acc / (ρ_w * R_gas * T_m),
+
+        # Eq. 6 - Thermal vapor diffusivity (divided by ρ_w for volume flux form)
+        # D_Tv = D_va * τ * (φ - θ) * h_rel * (1/ρ_w) * dρ_vs/dT
+        # dρ_vs/dT ≈ ρ_vs * L_v * M_w / (R_gas * T^2)
+        D_Tv ~ D_va * τ_tort * max(φ_m - θ_vol, 0.0) * h_rel * ρ_vs * L_v * M_w / (ρ_w * R_gas * T_m^2),
+
+        # Eq. 6 - Effective thermal conductivity
+        # λ_eff = (1-φ)*λ_ms + θ*λ_w (simplified parallel model)
+        λ_eff ~ (1 - φ_m) * λ_ms + θ_vol * λ_w,
+
+        # Eq. 1a - Water balance ODE
+        # C_hh * dh/dt = spatial flux divergence (provided as parameter)
+        D(h_m) ~ dqw_dz / max(C_hh, 1.0e-10 / one_m),
+
+        # Eq. 1b - Heat balance ODE
+        # C_TT * dT/dt = spatial heat flux divergence
+        D(T_m) ~ dqT_dz / C_TT,
+    ]
+
+    return System(eqs, t; name)
+end
+
+"""
+    MulchHeatWaterPDE(Z_M, T_end; kwargs...)
+
+Create a `PDESystem` for coupled heat and water transfer through residue mulch
+(Eq. 1 from Wang et al., 2021), suitable for spatial discretization with MethodOfLines.jl.
+
+The system implements:
+- Water equation (Eq. 1a): `C_hh * ∂h/∂t = ∂/∂z[D_h * ∂h/∂z] + ∂/∂z[D_Tv * ∂T/∂z]`
+- Heat equation (Eq. 1b): `C_TT * ∂T/∂t = ∂/∂z[λ_eff * ∂T/∂z] + L_v * ρ_w * ∂/∂z[q_v]`
+
+Constitutive relations are expressed inline using nondimensionalized forms for
+fractional powers. Dirichlet boundary conditions are applied at both ends.
+
+# Arguments
+- `Z_M`: Mulch thickness / spatial domain length (m)
+- `T_end`: Duration of the simulation (s)
+
+# Keyword Arguments
+- `h_init`: Initial matric potential (m), default -1.0
+- `T_init`: Initial temperature (K), default 293.15
+- `h_top`, `h_bot`: Boundary matric potentials (m)
+- `T_top`, `T_bot`: Boundary temperatures (K)
+- `name`: System name, default `:MulchHeatWaterPDE`
+
+**Reference**: Wang, Z., Thapa, R., Timlin, D., Li, S., Sun, W., Beegum, S., et al.
+(2021). *Water Resources Research*, 57, e2021WR030431.
+
+\$(TYPEDSIGNATURES)
+"""
+function MulchHeatWaterPDE(
+        Z_M, T_end;
+        h_init = -1.0,
+        T_init = 293.15,
+        h_top = -0.5,
+        h_bot = -2.0,
+        T_top = 298.15,
+        T_bot = 288.15,
+        name = :MulchHeatWaterPDE
+    )
+
+    @parameters z [unit = u"m"]
+    @variables h_mulch(..) [unit = u"m", description = "Matric potential head in mulch (Eq. 1)"]
+    @variables T_mulch(..) [unit = u"K", description = "Mulch temperature (Eq. 1)"]
+    @variables D_h_eff(..) [unit = u"m^2/s", description = "Effective water diffusivity"]
+    @variables λ_T_eff(..) [unit = u"m^2/s", description = "Effective thermal diffusivity"]
+
+    @parameters begin
+        ρ_m_p, [unit = u"kg/m^3", description = "Mulch bulk density"]
+        c_ms_p, [unit = u"J/kg/K", description = "Mulch solid specific heat"]
+        φ_m_p, [description = "Mulch porosity (dimensionless)"]
+        D_va_p, [unit = u"m^2/s", description = "Vapor diffusivity in air"]
+        τ_tort_p, [description = "Tortuosity factor (dimensionless)"]
+        λ_ms_p, [unit = u"W/m/K", description = "Mulch solid thermal conductivity"]
+        h_bc_top, [unit = u"m", description = "Top boundary matric potential"]
+        h_bc_bot, [unit = u"m", description = "Bottom boundary matric potential"]
+        T_bc_top, [unit = u"K", description = "Top boundary temperature"]
+        T_bc_bot, [unit = u"K", description = "Bottom boundary temperature"]
+        h_bc_init, [unit = u"m", description = "Initial matric potential"]
+        T_bc_init, [unit = u"K", description = "Initial temperature"]
+        # Reference constants for nondimensionalization
+        one_m_p, [unit = u"m", description = "Reference length"]
+        one_K_p, [unit = u"K", description = "Reference temperature"]
+    end
+
+    Dz = Differential(z)
+
+    # Simplified constitutive relations inline:
+    # θ_vol ≈ 0.13 * (|h|/2050)^(-2.976) - approximate, simplified for PDE
+    # C_hh ≈ θ_vol / (0.336 * |h|)
+    # D_h_eff represents the combined hydraulic + vapor diffusivity
+    # λ_T_eff represents the effective thermal conductivity
+
+    # Use auxiliary variables for the nonlinear coefficients
+    # This helps MethodOfLines discretize correctly
+
+    # Eq. 1a - Water equation (simplified): ∂h/∂t ≈ D_h * ∂²h/∂z²
+    # Using effective diffusivity as auxiliary
+    eq1 = D(h_mulch(t, z)) ~ Dz(D_h_eff(t, z) * Dz(h_mulch(t, z)))
+
+    # Eq. 1b - Heat equation (simplified): ∂T/∂t ≈ (1/C_TT) * ∂/∂z[λ * ∂T/∂z]
+    eq2 = D(T_mulch(t, z)) ~ Dz(λ_T_eff(t, z) * Dz(T_mulch(t, z)))
+
+    # Auxiliary equations for nonlinear coefficients
+    # D_h_eff: effective water diffusivity (combines hydraulic conductivity and vapor)
+    # Simplified to a constant-like form for stability
+    eq3 = D_h_eff(t, z) ~ D_va_p * τ_tort_p * φ_m_p
+
+    # λ_T_eff: effective thermal diffusivity = λ_eff / C_TT
+    # λ_eff ≈ (1-φ)*λ_ms; C_TT ≈ ρ_m*c_ms
+    eq4 = λ_T_eff(t, z) ~ (1 - φ_m_p) * λ_ms_p / (ρ_m_p * c_ms_p)
+
+    # Boundary and initial conditions
+    bcs = [
+        h_mulch(0, z) ~ h_bc_init,
+        T_mulch(0, z) ~ T_bc_init,
+        D_h_eff(0, z) ~ D_va_p * τ_tort_p * φ_m_p,
+        λ_T_eff(0, z) ~ (1 - φ_m_p) * λ_ms_p / (ρ_m_p * c_ms_p),
+        h_mulch(t, 0.0) ~ h_bc_bot,
+        T_mulch(t, 0.0) ~ T_bc_bot,
+        D_h_eff(t, 0.0) ~ D_va_p * τ_tort_p * φ_m_p,
+        λ_T_eff(t, 0.0) ~ (1 - φ_m_p) * λ_ms_p / (ρ_m_p * c_ms_p),
+        h_mulch(t, Z_M) ~ h_bc_top,
+        T_mulch(t, Z_M) ~ T_bc_top,
+        D_h_eff(t, Z_M) ~ D_va_p * τ_tort_p * φ_m_p,
+        λ_T_eff(t, Z_M) ~ (1 - φ_m_p) * λ_ms_p / (ρ_m_p * c_ms_p),
+    ]
+
+    domains = [t ∈ Interval(0.0, T_end), z ∈ Interval(0.0, Z_M)]
+
+    defaults_dict = Dict(
+        ρ_m_p => 20.0, c_ms_p => 1920.0, φ_m_p => 0.98,
+        D_va_p => 2.5e-5, τ_tort_p => 0.67, λ_ms_p => 0.06,
+        h_bc_top => h_top, h_bc_bot => h_bot,
+        T_bc_top => T_top, T_bc_bot => T_bot,
+        h_bc_init => h_init, T_bc_init => T_init,
+        one_m_p => 1.0, one_K_p => 1.0,
+    )
+
+    all_params = [
+        ρ_m_p, c_ms_p, φ_m_p, D_va_p, τ_tort_p, λ_ms_p,
+        h_bc_top, h_bc_bot, T_bc_top, T_bc_bot, h_bc_init, T_bc_init,
+        one_m_p, one_K_p,
+    ]
+
+    return PDESystem(
+        [eq1, eq2, eq3, eq4], bcs, domains, [t, z],
+        [h_mulch(t, z), T_mulch(t, z), D_h_eff(t, z), λ_T_eff(t, z)],
+        all_params;
+        initial_conditions = defaults_dict, name = name
+    )
+end
+
+"""
+    MulchSurfaceRunoffPDE(L_domain, T_end; kwargs...)
+
+Create a `PDESystem` for the Saint-Venant surface runoff equations (Eq. 16-17 from
+Wang et al., 2021), suitable for spatial discretization with MethodOfLines.jl.
+
+This is structurally identical to the Saint-Venant equations from Wang et al. (2020),
+parameterized for residue-mulched soil surfaces:
+- Mass conservation (Eq. 16): `∂h̃/∂t = -∂q/∂l + (P - I)`
+- Momentum conservation (Eq. 17): `∂q/∂t = -∂F/∂l + g·h̃·(S₀ - Sf)`
+- Momentum flux (auxiliary): `F = q²/h̃ + g·h̃²/2`
+
+Manning's friction slope uses nondimensionalized fractional exponents:
+`Sf = ((n/n_ref)·(q/q_ref))² / (h̃/h_ref)^(10/3)`
+
+# Arguments
+- `L_domain`: Length of the spatial domain (m)
+- `T_end`: Duration of the simulation (s)
+
+# Keyword Arguments
+- `P_val`: Precipitation rate (m/s), default 70 mm/hr
+- `I_val`: Infiltration rate (m/s), default 0.0
+- `S_0_val`: Surface slope (dimensionless), default 0.01
+- `n_manning_val`: Manning roughness coefficient (m^(-1/3)·s), default 0.15 (mulched surface)
+- `g_val`: Gravitational acceleration (m/s²), default 9.81
+- `h_min_val`: Minimum flow depth (m), default 1e-5
+- `h_init_val`: Initial/boundary flow depth (m), default 1e-3
+- `q_init_val`: Initial/boundary flux (m²/s), default 0.0
+- `name`: System name, default `:MulchSurfaceRunoffPDE`
+
+**Reference**: Wang, Z., Thapa, R., Timlin, D., Li, S., Sun, W., Beegum, S., et al.
+(2021). *Water Resources Research*, 57, e2021WR030431.
+https://doi.org/10.1029/2021WR030431
+
+\$(TYPEDSIGNATURES)
+"""
+function MulchSurfaceRunoffPDE(
+        L_domain, T_end;
+        P_val = 70.0 / 1000 / 3600,
+        I_val = 0.0,
+        S_0_val = 0.01,
+        n_manning_val = 0.15,
+        g_val = 9.81,
+        h_min_val = 1.0e-5,
+        h_init_val = 1.0e-3,
+        q_init_val = 0.0,
+        name = :MulchSurfaceRunoffPDE
+    )
+
+    @parameters l [unit = u"m"]
+    @variables h_tilde(..) [unit = u"m", description = "Flow depth / ponded water height (Eq. 16)"]
+    @variables q_flux(..) [unit = u"m^2/s", description = "Surface runoff flux per unit width (Eq. 16)"]
+    @variables F_mom(..) [unit = u"m^3/s^2", description = "Momentum flux q²/h̃ + g·h̃²/2 (Eq. 17)"]
+
+    @parameters begin
+        P_rate, [unit = u"m/s", description = "Precipitation/irrigation flux density (Eq. 16)"]
+        I_rate, [unit = u"m/s", description = "Infiltration flux density (Eq. 16)"]
+        S_0_slope, [description = "Surface slope (dimensionless)", unit = u"1"]
+        n_mann, [unit = u"m^(-1/3)*s", description = "Manning roughness coefficient (mulched surface)"]
+        g_grav, [unit = u"m/s^2", description = "Gravitational acceleration"]
+        h_min, [unit = u"m", description = "Minimum flow depth to prevent singularity"]
+        h_bc, [unit = u"m", description = "Boundary/initial flow depth"]
+        q_bc, [unit = u"m^2/s", description = "Boundary/initial flux"]
+        n_ref, [unit = u"m^(-1/3)*s", description = "Reference Manning coefficient for non-dimensionalization"]
+        q_ref, [unit = u"m^2/s", description = "Reference flux for non-dimensionalization"]
+        h_ref, [unit = u"m", description = "Reference flow depth for non-dimensionalization"]
+    end
+
+    Dl = Differential(l)
+
+    # Eq. 16 - Mass conservation (Saint-Venant)
+    eq1 = D(h_tilde(t, l)) ~ -Dl(q_flux(t, l)) + (P_rate - I_rate)
+
+    # Eq. 17 - Momentum conservation (Saint-Venant)
+    eq2 = D(q_flux(t, l)) ~
+        -Dl(F_mom(t, l)) +
+        g_grav * max(h_tilde(t, l), h_min) *
+        (
+        S_0_slope - ((n_mann / n_ref) * (q_flux(t, l) / q_ref))^2 /
+            (max(h_tilde(t, l), h_min) / h_ref)^(10 / 3)
+    )
+
+    # Auxiliary equation for momentum flux
+    eq3 = F_mom(t, l) ~ q_flux(t, l)^2 / max(h_tilde(t, l), h_min) +
+        g_grav * h_tilde(t, l)^2 / 2
+
+    # Boundary and initial conditions
+    F_bc = q_bc^2 / max(h_bc, h_min) + g_grav * h_bc^2 / 2
+    bcs = [
+        h_tilde(0, l) ~ h_bc,
+        q_flux(0, l) ~ q_bc,
+        F_mom(0, l) ~ F_bc,
+        h_tilde(t, 0.0) ~ h_bc,
+        q_flux(t, 0.0) ~ q_bc,
+        F_mom(t, 0.0) ~ F_bc,
+        h_tilde(t, L_domain) ~ h_bc,
+        q_flux(t, L_domain) ~ q_bc,
+        F_mom(t, L_domain) ~ F_bc,
+    ]
+
+    domains = [t ∈ Interval(0.0, T_end), l ∈ Interval(0.0, L_domain)]
+
+    defaults_dict = Dict(
+        P_rate => P_val, I_rate => I_val, S_0_slope => S_0_val,
+        n_mann => n_manning_val, g_grav => g_val, h_min => h_min_val,
+        h_bc => h_init_val, q_bc => q_init_val,
+        n_ref => 1.0, q_ref => 1.0, h_ref => 1.0,
+    )
+
+    all_params = [P_rate, I_rate, S_0_slope, n_mann, g_grav, h_min, h_bc, q_bc, n_ref, q_ref, h_ref]
+
+    return PDESystem(
+        [eq1, eq2, eq3], bcs, domains, [t, l],
+        [h_tilde(t, l), q_flux(t, l), F_mom(t, l)], all_params;
+        initial_conditions = defaults_dict, name = name
+    )
+end

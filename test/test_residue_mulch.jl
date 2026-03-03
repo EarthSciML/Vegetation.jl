@@ -440,3 +440,220 @@ end
     h_at_low = a_m * 0.1^(-b_m)
     @test h_at_low < h_at_1  # More suction at lower water content
 end
+
+# ============================================================
+# MulchHeatWaterTransfer Tests
+# ============================================================
+
+@testitem "MulchHeatWaterTransfer: Structural Verification" setup = [MulchSetup] tags = [:mulch] begin
+    sys = MulchHeatWaterTransfer()
+    @test sys isa ModelingToolkit.System
+    @test nameof(sys) == :MulchHeatWaterTransfer
+
+    eqs = equations(sys)
+    vars = unknowns(sys)
+
+    @test length(eqs) == 10
+
+    var_names = [string(v) for v in vars]
+    for expected in [
+            "h_m(t)", "T_m(t)", "θ_vol(t)", "C_hh(t)", "C_TT(t)",
+            "ρ_vs(t)", "h_rel(t)", "D_mv(t)", "D_Tv(t)", "λ_eff(t)",
+        ]
+        @test any(n -> contains(n, expected), var_names)
+    end
+end
+
+@testitem "MulchHeatWaterTransfer: Compilation" setup = [MulchSetup] tags = [:mulch] begin
+    sys = MulchHeatWaterTransfer()
+    compiled = mtkcompile(sys)
+
+    # After compilation, only h_m and T_m should remain as ODE states
+    @test length(unknowns(compiled)) == 2
+    state_names = Symbol.(unknowns(compiled))
+    @test Symbol("h_m(t)") in state_names
+    @test Symbol("T_m(t)") in state_names
+end
+
+@testitem "MulchHeatWaterTransfer: Constitutive Relations" setup = [MulchSetup] tags = [:mulch] begin
+    sys = MulchHeatWaterTransfer()
+    compiled = mtkcompile(sys)
+
+    # Test at default conditions: h=-1m, T=293.15K
+    tspan = (0.0, 1.0)
+    prob = ODEProblem(compiled, [], tspan)
+    sol = solve(prob)
+
+    @test sol.retcode == SciMLBase.ReturnCode.Success
+
+    # θ_vol should be positive
+    @test sol[compiled.θ_vol][1] > 0
+
+    # C_hh (water capacity) should be positive
+    @test sol[compiled.C_hh][1] > 0
+
+    # C_TT (heat capacity) should be positive
+    @test sol[compiled.C_TT][1] > 0
+
+    # ρ_vs (saturated vapor density) should be positive
+    @test sol[compiled.ρ_vs][1] > 0
+
+    # h_rel (relative humidity) should be between 0 and 1
+    @test 0 < sol[compiled.h_rel][1] <= 1
+
+    # D_mv (isothermal vapor diffusivity) should be positive
+    @test sol[compiled.D_mv][1] > 0
+
+    # D_Tv (thermal vapor diffusivity) should be positive
+    @test sol[compiled.D_Tv][1] > 0
+
+    # λ_eff (effective thermal conductivity) should be positive
+    @test sol[compiled.λ_eff][1] > 0
+end
+
+@testitem "MulchHeatWaterTransfer: Saturated Vapor Density" setup = [MulchSetup] tags = [:mulch] begin
+    # Verify Tetens formula at 20°C (293.15K)
+    # P_vs(20°C) ≈ 611 * exp(17.27*20/(20+237.3)) ≈ 2338 Pa
+    # ρ_vs = M_w * P_vs / (R * T) ≈ 0.01802 * 2338 / (8.314 * 293.15) ≈ 0.01728 kg/m³
+    T_C = 20.0
+    P_vs = 611.0 * exp(17.27 * T_C / (T_C + 237.3))
+    ρ_vs_expected = 0.01802 * P_vs / (8.314 * 293.15)
+    @test ρ_vs_expected > 0.01  # Sanity check
+
+    sys = MulchHeatWaterTransfer()
+    compiled = mtkcompile(sys)
+    prob = ODEProblem(compiled, [], (0.0, 1.0))
+    sol = solve(prob)
+
+    @test sol[compiled.ρ_vs][1] ≈ ρ_vs_expected rtol = 0.01
+end
+
+# ============================================================
+# MulchHeatWaterPDE Tests
+# ============================================================
+
+@testsnippet MulchPDESetup begin
+    using ModelingToolkit
+    using ModelingToolkit: t, D
+    using DomainSets
+    using MethodOfLines
+    using OrdinaryDiffEqDefault
+    using OrdinaryDiffEqDefault: SciMLBase
+    using Vegetation
+end
+
+@testitem "MulchHeatWaterPDE: Structural Verification" setup = [MulchPDESetup] tags = [:mulch_pde] begin
+    pde = MulchHeatWaterPDE(0.06, 3600.0)
+
+    @test length(pde.eqs) == 4
+    @test length(pde.dvs) == 4
+    @test length(pde.ps) == 14
+    @test length(pde.ivs) == 2
+end
+
+@testitem "MulchHeatWaterPDE: Discretization" setup = [MulchPDESetup] tags = [:mulch_pde] begin
+    pde = MulchHeatWaterPDE(0.06, 3600.0)
+    z = pde.ivs[2]
+    dz = 0.02
+    disc = MOLFiniteDifference([z => dz], t, approx_order = 2)
+    prob = discretize(pde, disc; checks = false)
+
+    @test prob isa ODEProblem
+    @test length(prob.u0) > 0
+    @test prob.tspan == (0.0, 3600.0)
+end
+
+@testitem "MulchHeatWaterPDE: Solution" setup = [MulchPDESetup] tags = [:mulch_pde] begin
+    pde = MulchHeatWaterPDE(0.06, 3600.0)
+    z = pde.ivs[2]
+    dz = 0.02
+    disc = MOLFiniteDifference([z => dz], t, approx_order = 2)
+    prob = discretize(pde, disc; checks = false)
+
+    sol = solve(prob)
+    @test sol.retcode == SciMLBase.ReturnCode.Success
+    @test length(sol.t) > 1
+end
+
+@testitem "MulchHeatWaterPDE: Boundary Values" setup = [MulchPDESetup] tags = [:mulch_pde] begin
+    pde = MulchHeatWaterPDE(
+        0.06, 3600.0;
+        h_top = -0.5, h_bot = -2.0, T_top = 298.15, T_bot = 288.15
+    )
+
+    z = pde.ivs[2]
+    dz = 0.02
+    disc = MOLFiniteDifference([z => dz], t, approx_order = 2)
+    prob = discretize(pde, disc; checks = false)
+
+    # All initial values should be finite
+    @test all(isfinite.(prob.u0))
+    @test prob.tspan == (0.0, 3600.0)
+end
+
+# ============================================================
+# MulchSurfaceRunoffPDE Tests
+# ============================================================
+
+@testitem "MulchSurfaceRunoffPDE: Structural Verification" setup = [MulchPDESetup] tags = [:mulch_pde] begin
+    pde = MulchSurfaceRunoffPDE(0.5, 60.0)
+
+    @test length(pde.eqs) == 3
+    @test length(pde.dvs) == 3
+    @test length(pde.ps) == 11
+    @test length(pde.ivs) == 2
+end
+
+@testitem "MulchSurfaceRunoffPDE: Discretization" setup = [MulchPDESetup] tags = [:mulch_pde] begin
+    pde = MulchSurfaceRunoffPDE(0.5, 60.0)
+    l = pde.ivs[2]
+    dl = 0.1
+    disc = MOLFiniteDifference([l => dl], t, approx_order = 2)
+    prob = discretize(pde, disc; checks = false)
+
+    @test prob isa ODEProblem
+    @test length(prob.u0) > 0
+    @test prob.tspan == (0.0, 60.0)
+    @test length(prob.u0) >= 8
+end
+
+@testitem "MulchSurfaceRunoffPDE: Solution" setup = [MulchPDESetup] tags = [:mulch_pde] begin
+    pde = MulchSurfaceRunoffPDE(
+        0.5, 60.0;
+        P_val = 70.0 / 1000 / 3600,
+        S_0_val = 0.01,
+        n_manning_val = 0.15,
+        h_init_val = 1.0e-3,
+        q_init_val = 0.0
+    )
+
+    l = pde.ivs[2]
+    dl = 0.1
+    disc = MOLFiniteDifference([l => dl], t, approx_order = 2)
+    prob = discretize(pde, disc; checks = false)
+
+    sol = solve(prob)
+    @test sol.retcode == SciMLBase.ReturnCode.Success
+    @test length(sol.t) > 1
+end
+
+@testitem "MulchSurfaceRunoffPDE: Custom Parameters" setup = [MulchPDESetup] tags = [:mulch_pde] begin
+    pde = MulchSurfaceRunoffPDE(
+        1.0, 120.0;
+        P_val = 1.0e-4,
+        I_val = 5.0e-5,
+        S_0_val = 0.02,
+        n_manning_val = 0.2
+    )
+
+    # Verify expected parameters exist
+    param_names = [string(p) for p in pde.ps]
+    @test any(n -> contains(n, "P_rate"), param_names)
+    @test any(n -> contains(n, "I_rate"), param_names)
+    @test any(n -> contains(n, "S_0"), param_names)
+    @test any(n -> contains(n, "n_mann"), param_names)
+
+    # Verify domain length is 1.0 and time span is 120.0
+    @test pde.domain[1].domain.right == 120.0
+    @test pde.domain[2].domain.right == 1.0
+end

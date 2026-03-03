@@ -12,4 +12,8 @@ export LANDISBiomass
 include("stage_prognosis.jl")
 export StagePrognosis, StagePrognosisHCB
 
+include("residue_mulch.jl")
+export ResidueMulchDecomposition, MulchRadiationAttenuation, MulchWindProfile,
+    MulchHeatVaporFluxes, MulchWaterCharacteristic
+
 end

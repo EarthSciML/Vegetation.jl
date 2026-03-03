@@ -34,7 +34,7 @@ constructed using MethodOfLines.jl.
 
 **Equation 1** — Four favorability indices (Acock et al. 1985):
 
-- ``f_1 = \frac{1}{2}(\psi_{trd} - 5.4|\psi|^{0.25} \exp(-10.58(1.7 - \rho_b))) - \frac{1}{4}(\psi_{trd} - \psi)``
+- ``f_1 = \frac{1}{2}(\psi_{trd} - 5.4|\psi|^{0.25} \exp(-10.58(1.7 - \rho_b))) - \frac{1}{4}(\psi_{rd} - \psi)``
 - ``f_2 = (T/18)^{1.66}`` for ``0 < T < 18``°C; ``f_2 = 1`` for ``18 \leq T < 33``°C; ``f_2 = (T/33)^{-1.66}`` for ``T \geq 33``°C
 - ``f_3 = ([O_2] - 0.02)^{7.14}``
 - ``f_4 = 1 - \min(1, (M + Y)/0.03)``
@@ -53,7 +53,7 @@ constructed using MethodOfLines.jl.
 
 ``D = D^0 \times \min\{\tilde{f}_1(\psi), \tilde{f}_2(T)\}``
 
-where ``\tilde{f}_1(\psi) = \frac{1}{2}\sin\left(\frac{\pi(\psi - (\psi_s + \psi_r)/2)}{\psi_s - \psi_r}\right) + \frac{1}{2}`` and ``\tilde{f}_2(T) = \max\left\{\frac{(1 + e^{p - T/T_0}) e^{T/T_0 - p}}{1 + e^{q - u/T}}, 1.0\right\}``
+where ``\tilde{f}_1(\psi) = \frac{1}{2}\sin\left(\frac{\pi(\psi - (\psi_s + \psi_r)/2)}{\psi_s - \psi_r}\right) + \frac{1}{2}`` and ``\tilde{f}_2(T) = \max\left\{\frac{(1 + e^{q - u/T_0}) \, e^{p/T - p/T_0}}{1 + e^{q - u/T}}, 1.0\right\}``
 
 ### Soil Properties (Table 1 from Wang et al. 2021)
 

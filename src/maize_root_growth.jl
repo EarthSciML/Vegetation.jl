@@ -48,7 +48,7 @@ $(SIGNATURES)
     # ===== Empirical constants from Eq. (1) =====
     @constants begin
         # Penetration resistance constants (f₁, Acock et al. 1985)
-        # f₁ = (1/2)(ψ_trd[bar] - 5.4|ψ[bar]|^0.25·exp(-10.58(1.7[Mg/m³] - ρ_b[Mg/m³]))) - (1/4)(ψ_trd[bar] - ψ[bar])
+        # f₁ = (1/2)(ψ_trd[bar] - 5.4|ψ[bar]|^0.25·exp(-10.58(1.7[Mg/m³] - ρ_b[Mg/m³]))) - (1/4)(ψ_rd[bar] - ψ[bar])
         # After non-dimensionalization by P_ref and ρ_ref, the coefficients are dimensionless.
         pen_coeff = 5.4, [description = "Penetration resistance coefficient in f₁ (dimensionless)"]
         pen_exp = 0.25, [description = "Exponent on |ψ/P_ref| in f₁ (dimensionless)"]
@@ -74,7 +74,7 @@ $(SIGNATURES)
         ψ_s_diff = -14709.975, [description = "Wet limit water potential ψ_s for diffusion (-150 cm head)", unit = u"Pa"]
         ψ_r_diff = -49033.25, [description = "Dry limit water potential ψ_r for diffusion (-500 cm head)", unit = u"Pa"]
         T0_diff = 295.0, [description = "Reference temperature T₀ for diffusion", unit = u"K"]
-        p_diff = 10000.0, [description = "Temperature parameter p in f̃₂ (dimensionless)"]
+        p_diff = 10000.0, [description = "Temperature parameter p in f̃₂", unit = u"K"]
         q_diff = 1.0, [description = "Temperature parameter q in f̃₂ (dimensionless)"]
         u_diff = 18000.0, [description = "Temperature parameter u in f̃₂", unit = u"K"]
     end
@@ -87,6 +87,7 @@ $(SIGNATURES)
         D0_zz = 3.0 * 1.0e-4 / 86400.0, [description = "Potential vertical diffusivity D⁰_z (3 cm²/day)", unit = u"m^2/s"]
         R_total = 0.001 / 86400.0, [description = "Total carbon input rate for root growth", unit = u"kg/m^3/s"]
         ψ_rtd = 5.0e5, [description = "Root turgor pressure at dawn", unit = u"Pa"]
+        ψ_rd = -3.0e4, [description = "Root water potential at dawn", unit = u"Pa"]
         ρ_b = 1380.0, [description = "Soil bulk density", unit = u"kg/m^3"]
         ψ_soil = -3.0e4, [description = "Soil water potential", unit = u"Pa"]
         T_soil = 298.0, [description = "Soil temperature", unit = u"K"]
@@ -117,13 +118,13 @@ $(SIGNATURES)
         # --- Eq. (1): Favorability indices ---
 
         # f₁ - Penetration resistance (Eq. 1, Acock et al. 1985)
-        # f₁ = (1/2)(ψ_trd[bar] - 5.4|ψ[bar]|^0.25·exp(-10.58(1.7[Mg/m³] - ρ_b[Mg/m³]))) - (1/4)(ψ_trd[bar] - ψ[bar])
+        # f₁ = (1/2)(ψ_trd[bar] - 5.4|ψ[bar]|^0.25·exp(-10.58(1.7[Mg/m³] - ρ_b[Mg/m³]))) - (1/4)(ψ_rd[bar] - ψ[bar])
         # Non-dimensionalize pressures by P_ref (1 bar) and densities by ρ_ref (1 Mg/m³)
         f1 ~ max(
             0.0, min(
                 1.0,
                 0.5 * (ψ_rtd / P_ref - pen_coeff * abs(ψ_soil / P_ref)^pen_exp * exp(-pen_bd_coeff * (ρ_bd_crit - ρ_b) / ρ_ref))
-                    - 0.25 * (ψ_rtd / P_ref - ψ_soil / P_ref)
+                    - 0.25 * (ψ_rd / P_ref - ψ_soil / P_ref)
             )
         ),
 
@@ -179,13 +180,17 @@ $(SIGNATURES)
         ),
 
         # f̃₂(T) — temperature factor for diffusion
-        # f̃₂(T) = max{[(1 + e^(p-T/T₀))·e^(T/T₀-p)] / (1 + e^(q-u/T)), 1.0}
-        # Algebraic simplification: (1+e^a)·e^(-a) = e^(-a) + 1 = 1 + e^(-a)
-        # This avoids overflow from exp(p - T/T₀) when p ≫ T/T₀.
-        # T/T₀ = K/K = dimensionless; u/T = u_diff/T_soil = K/K = dimensionless
+        # f̃₂(T) = max{[(1 + e^(q-u/T₀)) × e^(p/T-p/T₀)] / (1 + e^(q-u/T)), 1.0}
+        # All exponent arguments are dimensionless: p/T = dimensionless/K... but p has
+        # implicit units of K in the paper (p=10000 K, u=18000 K, T₀=295 K).
+        # q-u/T₀ = 1 - 18000/295 ≈ -60, so (1+e^(q-u/T₀)) ≈ 1.
+        # The dominant term is e^(p/T - p/T₀): >1 for T<T₀, <1 for T>T₀.
+        # Since max(..., 1.0) is applied, f̃₂ ≥ 1 always, so it never limits D
+        # below D⁰ (f̃₁ ∈ [0,1] always dominates in min{f̃₁, f̃₂}).
         f_tilde_T ~ max(
             1.0,
-            (1.0 + exp(T_soil / T0_diff - p_diff))
+            (1.0 + exp(q_diff - u_diff / T0_diff))
+                * exp(p_diff / T_soil - p_diff / T0_diff)
                 / (1.0 + exp(q_diff - u_diff / T_soil))
         ),
 

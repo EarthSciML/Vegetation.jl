@@ -1,6 +1,7 @@
 module Vegetation
 
 using EarthSciMLBase
+using MethodOfLines
 using ModelingToolkit
 using ModelingToolkit: t, D, @register_symbolic
 # Symbolics is needed for @register_symbolic macro expansion.

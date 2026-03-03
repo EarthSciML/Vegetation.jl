@@ -60,7 +60,7 @@ https://doi.org/10.1016/j.jhydrol.2022.127541
         h_a = -0.13, [description = "Air entry matric potential (Campbell model, Table 1)", unit = u"m"]
         b_camp = 6.53,
             [description = "Campbell pore-size distribution parameter (Table 1)", unit = u"1"]
-        K_s = 3.8e-7,
+        K_s = 3.8e-5,
             [description = "Saturated hydraulic conductivity at T_0 (Table 1)", unit = u"m/s"]
         p_K = 10.06, [description = "Hydraulic conductivity exponent (Table 1)", unit = u"1"]
         f_sand = 0.022, [description = "Sand mass fraction (Table 1)", unit = u"1"]
@@ -179,9 +179,11 @@ end
 
 # --- Registered functions for PDE constitutive relations ---
 # These are opaque to MethodOfLines, avoiding issues with symbolic fractional powers.
-# All inputs and outputs are dimensionless (divided by reference units).
+# Functions handle units by using reference constants for non-dimensionalization.
 
 # Water content from matric potential - Campbell model (Table 1)
+# Input: h [m], h_a [m], theta_s [dimensionless], b [dimensionless]
+# Output: theta [dimensionless]
 _vt_theta(h, h_a, theta_s, b) = theta_s * (h / h_a)^(-1.0 / b)
 
 # Specific moisture capacity dθ/dh [1/m equivalent]
@@ -319,7 +321,7 @@ function SoilVaporTransferPDE(
         θ_s_val = 0.547,
         h_a_val = -0.13,
         b_camp_val = 6.53,
-        K_s_val = 3.8e-7,
+        K_s_val = 3.8e-5,
         p_K_val = 10.06,
         f_sand_val = 0.022,
         f_clay_val = 0.249,
@@ -330,32 +332,29 @@ function SoilVaporTransferPDE(
         name = :SoilVaporTransferPDE
     )
 
-    # All PDE variables and parameters are dimensionless (SI values as plain numbers).
-    # Unit correctness is verified by the ODE component SoilVaporTransfer which has
-    # full unit annotations. The PDE uses registered functions (opaque to MethodOfLines)
-    # to avoid fractional power issues during MOL's derivative order detection.
-    @parameters x
-    @variables h_soil(..)
-    @variables T_soil(..)
+    # PDE variables and parameters with proper SI units
+    @parameters x [unit = u"m"]
+    @variables h_soil(..) [unit = u"m"]
+    @variables T_soil(..) [unit = u"K"]
 
     @parameters begin
-        θ_s
-        h_a
-        b_camp
-        K_s
-        p_K
-        f_sand
-        f_clay
-        ρ_b
-        S_a
-        G_a
-        T_0
-        h_init_param
-        T_init_param
-        h_left_param
-        h_right_param
-        T_left_param
-        T_right_param
+        θ_s, [unit = u"1"]
+        h_a, [unit = u"m"]
+        b_camp, [unit = u"1"]
+        K_s, [unit = u"m/s"]
+        p_K, [unit = u"1"]
+        f_sand, [unit = u"1"]
+        f_clay, [unit = u"1"]
+        ρ_b, [unit = u"kg/m^3"]
+        S_a, [unit = u"m^2/m^3"]
+        G_a, [unit = u"1"]
+        T_0, [unit = u"K"]
+        h_init_param, [unit = u"m"]
+        T_init_param, [unit = u"K"]
+        h_left_param, [unit = u"m"]
+        h_right_param, [unit = u"m"]
+        T_left_param, [unit = u"K"]
+        T_right_param, [unit = u"K"]
     end
 
     Dx = Differential(x)
@@ -367,17 +366,37 @@ function SoilVaporTransferPDE(
     T_x = Dx(T)
 
     # Constitutive relations via registered functions (opaque to MethodOfLines)
-    C_θθ = _vt_C_theta(h, h_a, θ_s, b_camp)
-    K_val = _vt_K(h, T, h_a, θ_s, b_camp, K_s, p_K)
-    λ_val = _vt_lambda(h, h_a, θ_s, b_camp, f_sand, f_clay, ρ_b)
-    C_TT = _vt_Cv(h, h_a, θ_s, b_camp, ρ_b)
+    # Non-dimensionalize inputs by dividing by reference units
+    @constants begin
+        one_m_ref = 1.0, [unit = u"m"]
+        one_K_ref = 1.0, [unit = u"K"]
+        one_kgm3_ref = 1.0, [unit = u"kg/m^3"]
+        one_ms_ref = 1.0, [unit = u"m/s"]
+        one_WmK_ref = 1.0, [unit = u"W/(m*K)"]
+        one_Jm3K_ref = 1.0, [unit = u"J/(m^3*K)"]
+        one_inv_m_ref = 1.0, [unit = u"1/m"]
+        one_m2m3_ref = 1.0, [unit = u"m^2/m^3"]
+    end
+
+    # Non-dimensionalized calls to registered functions
+    C_θθ = _vt_C_theta(h / one_m_ref, h_a / one_m_ref, θ_s, b_camp) * one_inv_m_ref
+    K_val = _vt_K(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_ms_ref
+    λ_val = _vt_lambda(h / one_m_ref, h_a / one_m_ref, θ_s, b_camp, f_sand, f_clay, ρ_b / one_kgm3_ref) * one_WmK_ref
+    C_TT = _vt_Cv(h / one_m_ref, h_a / one_m_ref, θ_s, b_camp, ρ_b / one_kgm3_ref) * one_Jm3K_ref
 
     if include_vapor
-        D_mv = _vt_Dmv(h, T, h_a, θ_s, b_camp)
-        D_Tv = _vt_DTv(h, T, h_a, θ_s, b_camp)
-        D_tl = _vt_Dtl(h, T, h_a, θ_s, b_camp, K_s, p_K, G_a, S_a)
-        clrhoK = _vt_clrhoK(h, T, h_a, θ_s, b_camp, K_s, p_K)
-        vap_heat = _vt_vapor_heat(T, T_0)
+        @constants begin
+            one_ms_ref = 1.0, [unit = u"m/s"]
+            one_m2sK_ref = 1.0, [unit = u"m^2/(s*K)"]
+            one_Jm2K_ref = 1.0, [unit = u"J/(m^2*K)"]
+            one_Jm3_ref = 1.0, [unit = u"J/m^3"]
+        end
+
+        D_mv = _vt_Dmv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp) * one_ms_ref
+        D_Tv = _vt_DTv(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp) * one_m2sK_ref
+        D_tl = _vt_Dtl(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K, G_a, S_a / one_m2m3_ref) * one_m2sK_ref
+        clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_Jm2K_ref
+        vap_heat = _vt_vapor_heat(T / one_K_ref, T_0 / one_K_ref) * one_Jm3_ref
 
         # Water equation (Eq. 2a' - M_simp)
         water_flux = (D_mv + K_val) * h_x + (D_Tv + D_tl) * T_x
@@ -390,7 +409,8 @@ function SoilVaporTransferPDE(
         heat_vapor = vap_heat * vapor_flux
         heat_eq = D(T) ~ (1 / C_TT) * (Dx(heat_cond) + Dx(heat_liq) + Dx(heat_vapor))
     else
-        clrhoK = _vt_clrhoK(h, T, h_a, θ_s, b_camp, K_s, p_K)
+        @constants one_Jm2K_ref = 1.0, [unit = u"J/(m^2*K)"]
+        clrhoK = _vt_clrhoK(h / one_m_ref, T / one_K_ref, h_a / one_m_ref, θ_s, b_camp, K_s / one_ms_ref, p_K) * one_Jm2K_ref
 
         # M_prel (Eq. 1) - no vapor transfer
         water_eq = D(h) ~ (1 / C_θθ) * Dx(K_val * h_x) # Eq. 1a
@@ -427,13 +447,10 @@ function SoilVaporTransferPDE(
         h_init_param, T_init_param, h_left_param, h_right_param, T_left_param, T_right_param,
     ]
 
-    # Note: checks=false is necessary because the PDE uses dimensionless variables
-    # with registered functions, but ModelingToolkit's `t` has built-in time units (s).
-    # Unit correctness is verified by the ODE component SoilVaporTransfer which has
-    # full SI unit annotations on all variables and equations.
+    # PDE system with proper SI units throughout
     return PDESystem(
         eqs, bcs, domains, [t, x],
         [h_soil(t, x), T_soil(t, x)], all_params;
-        defaults = defaults_dict, name = name, checks = false
+        defaults = defaults_dict, name = name
     )
 end

@@ -72,7 +72,7 @@ using Vegetation: _vt_theta, _vt_C_theta, _vt_K, _vt_lambda,
 
 # Ida soil parameters (Table 1)
 θ_s = 0.547; h_a = -0.13; b = 6.53
-K_s = 3.80e-7; p_K = 10.06
+K_s = 3.80e-5; p_K = 10.06
 f_sand = 0.022; f_clay = 0.249; ρ_b = 1200.0
 S_a = 2.44e8; G_a = 6.0; T = 298.15
 
@@ -118,4 +118,27 @@ K_T = [_vt_K(h_test, T_val, h_a, θ_s, b, K_s, p_K) for T_val in T_range]
 plot(collect(T_range), K_T,
     xlabel="Temperature (K)", ylabel="K (m/s)",
     title="K(h=-1m) vs Temperature", legend=false, size=(500, 350))
+```
+
+### Example PDE Usage
+
+To solve the coupled water-heat-vapor PDE system using MethodOfLines.jl:
+
+```@example vapor
+using MethodOfLines, OrdinaryDiffEqDefault
+
+# Create PDE system (1D, 0.5m domain, 1 hour simulation)
+pde_sys = SoilVaporTransferPDE(0.5, 3600.0; include_vapor=true)
+
+# Discretize using MethodOfLines with appropriate grid spacing
+dx = 0.05  # 5cm grid spacing
+discretization = MOLFiniteDifference([pde_sys.ivs[2] => dx], pde_sys.ivs[1])
+
+# Use checks=false during discretization to handle units properly
+prob = MethodOfLines.discretize(pde_sys, discretization; checks=false)
+
+# Solve the resulting ODE system
+sol = solve(prob, Tsit5())
+
+println("Solution computed successfully for $(length(sol.t)) time steps")
 ```

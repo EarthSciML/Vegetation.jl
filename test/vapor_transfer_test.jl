@@ -12,7 +12,7 @@
         θ_s = 0.547,
         h_a = -0.13,      # m
         b_camp = 6.53,
-        K_s = 3.8e-7,    # m/s
+        K_s = 3.8e-5,    # m/s
         p_K = 10.06,
         f_sand = 0.022,
         f_clay = 0.249,
@@ -65,7 +65,7 @@ end
         elseif name == :b_camp
             @test ModelingToolkit.getdefault(p) == 6.53
         elseif name == :K_s
-            @test ModelingToolkit.getdefault(p) == 3.8e-7
+            @test ModelingToolkit.getdefault(p) == 3.8e-5
         elseif name == :p_K
             @test ModelingToolkit.getdefault(p) == 10.06
         elseif name == :f_sand

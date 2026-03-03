@@ -60,17 +60,17 @@ where ``\tilde{f}_1(\psi) = \frac{1}{2}\sin\left(\frac{\pi(\psi - (\psi_s + \psi
 The following table reproduces the layered soil physical properties used in validation
 simulations (Sections 3.2 and 4 of the paper, from Zhao et al. 2018):
 
-| Property | Layer 1 (<20 cm) | Layer 2 (20–35 cm) | Layer 3 (35–55 cm) | Layer 4 (55–75 cm) | Layer 5 (>75 cm) |
-|:---|:---:|:---:|:---:|:---:|:---:|
-| Residual Water Content θ_r (cm³/cm³) | 0.05 | 0.05 | 0.05 | 0.05 | 0.04 |
-| Saturated Water Content θ_s (cm³/cm³) | 0.39 | 0.39 | 0.39 | 0.38 | 0.38 |
-| van Genuchten α | 0.02 | 0.02 | 0.01 | 0.01 | 0.01 |
-| van Genuchten n | 1.30 | 1.26 | 1.28 | 1.20 | 1.38 |
-| Sat. Hydraulic Conductivity K_s (cm/day) | 140.30 | 144.70 | 155.80 | 170.50 | 122.60 |
-| Soil Bulk Density ρ_b (g/cm³) | 1.38 | 1.37 | 1.39 | 1.38 | 1.44 |
-| Soil Organic Matter (g/g) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
-| Sand Fraction (g/g) | 0.40 | 0.40 | 0.42 | 0.38 | 0.49 |
-| Silt Fraction (g/g) | 0.36 | 0.36 | 0.39 | 0.37 | 0.33 |
+| Property | Layer 1 (<20 cm) | Layer 2 (20–35 cm) | Layer 3 (35–55 cm) | Layer 4 (55–75 cm) | Layer 5 (>75 cm) | Fine Textured Soil Mulch (surface 3 cm on ridge) |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Residual Water Content θ_r (cm³/cm³) | 0.05 | 0.05 | 0.05 | 0.05 | 0.04 | 0.20 |
+| Saturated Water Content θ_s (cm³/cm³) | 0.39 | 0.39 | 0.39 | 0.38 | 0.38 | 0.52 |
+| van Genuchten α | 0.02 | 0.02 | 0.01 | 0.01 | 0.01 | 0.03 |
+| van Genuchten n | 1.30 | 1.26 | 1.28 | 1.20 | 1.38 | 1.10 |
+| Sat. Hydraulic Conductivity K_s (cm/day) | 140.30 | 144.70 | 155.80 | 170.50 | 122.60 | 1.00 |
+| Soil Bulk Density ρ_b (g/cm³) | 1.38 | 1.37 | 1.39 | 1.38 | 1.44 | 1.20 |
+| Soil Organic Matter (g/g) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| Sand Fraction (g/g) | 0.40 | 0.40 | 0.42 | 0.38 | 0.49 | 0.25 |
+| Silt Fraction (g/g) | 0.36 | 0.36 | 0.39 | 0.37 | 0.33 | 0.15 |
 
 ### Maize Yield and Water Balance (Table 2 from Wang et al. 2021)
 
@@ -167,15 +167,13 @@ function of temperature, matching the functional form in the paper.
 
 ```@example maize_root
 T_celsius = 0.5:0.5:45.0
+T_kelvin = T_celsius .+ 273.15
 f2_vals = Float64[]
-for Tc in T_celsius
-    if Tc < 18.0
-        push!(f2_vals, clamp((max(0.01, Tc) / 18.0)^1.66, 0.0, 1.0))
-    elseif Tc < 33.0
-        push!(f2_vals, 1.0)
-    else
-        push!(f2_vals, clamp((Tc / 33.0)^(-1.66), 0.0, 1.0))
-    end
+tspan_short = (0.0, 1.0)
+for Tk in T_kelvin
+    prob_f2 = ODEProblem(compiled, Dict(compiled.T_soil => Tk), tspan_short)
+    sol_f2 = solve(prob_f2)
+    push!(f2_vals, sol_f2[compiled.f2][1])
 end
 
 p = plot(T_celsius, f2_vals, xlabel="Temperature (°C)", ylabel="f₂",

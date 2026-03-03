@@ -21,6 +21,9 @@ makedocs(;
         "Stage (1973)" => [
             "Prognosis Model" => "stage_prognosis.md",
         ],
+        "Wang et al. (2022)" => [
+            "Soil Vapor Transfer" => "vapor_transfer.md",
+        ],
         "API" => "api.md",
     ],
 )

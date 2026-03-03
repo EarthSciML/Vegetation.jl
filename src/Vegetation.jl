@@ -12,4 +12,7 @@ export LANDISBiomass
 include("stage_prognosis.jl")
 export StagePrognosis, StagePrognosisHCB
 
+include("maize_root_growth.jl")
+export MaizeRootGrowth
+
 end

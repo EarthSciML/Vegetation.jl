@@ -12,7 +12,8 @@
     const one_cm2_day = 1.0e-4 / 86400.0  # m²/s
 end
 
-@testitem "MaizeRootGrowth: Structural Verification" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Structural Verification" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     sys = MaizeRootGrowth()
     @test sys isa ModelingToolkit.System
     @test nameof(sys) == :MaizeRootGrowth
@@ -27,8 +28,15 @@ end
     # Verify key variable names exist
     var_names = [string(v) for v in vars]
     for expected in [
-            "Y(t)", "M(t)", "f1(t)", "f2(t)", "f3(t)", "f4(t)",
-            "R_bar(t)", "D_eff_xx(t)", "D_eff_zz(t)",
+            "Y(t)",
+            "M(t)",
+            "f1(t)",
+            "f2(t)",
+            "f3(t)",
+            "f4(t)",
+            "R_bar(t)",
+            "D_eff_xx(t)",
+            "D_eff_zz(t)",
         ]
         @test any(n -> contains(n, expected), var_names)
     end
@@ -45,8 +53,8 @@ end
 
     params = parameters(compiled)
     pdict = Dict(
-        Symbol(p) => ModelingToolkit.getdefault(p) for p in params
-            if ModelingToolkit.hasdefault(p)
+        Symbol(p) => ModelingToolkit.getdefault(p) for
+            p in params if ModelingToolkit.hasdefault(p)
     )
 
     # Verify A_growth = 0.55/day in SI (s⁻¹)
@@ -60,8 +68,8 @@ end
     # so check it on the uncompiled system's parameters instead.
     sys_params = parameters(MaizeRootGrowth())
     sys_pdict = Dict(
-        Symbol(p) => ModelingToolkit.getdefault(p) for p in sys_params
-            if ModelingToolkit.hasdefault(p)
+        Symbol(p) => ModelingToolkit.getdefault(p) for
+            p in sys_params if ModelingToolkit.hasdefault(p)
     )
     @test sys_pdict[:D0_zz] ≈ 3.0 * one_cm2_day rtol = 1.0e-6
 
@@ -72,7 +80,8 @@ end
     @test pdict[:ρ_b] ≈ 1380.0 rtol = 1.0e-6
 end
 
-@testitem "MaizeRootGrowth: Equation Verification - f₁" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Equation Verification - f₁" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Verify f₁ against hand-computed reference values from Eq. 1
     # f₁ = (1/2)(ψ_trd - 5.4|ψ|^0.25·exp(-10.58(1.7-ρ_b))) - (1/4)(ψ_rd - ψ)
     # where ψ_trd, ψ_rd, ψ in bar and ρ_b in Mg/m³
@@ -94,7 +103,8 @@ end
     psi_rd = -0.3
     psi_s = -0.3
     rho = 1.38
-    f1_expected = 0.5 * (psi_trd - 5.4 * abs(psi_s)^0.25 * exp(-10.58 * (1.7 - rho))) -
+    f1_expected =
+        0.5 * (psi_trd - 5.4 * abs(psi_s)^0.25 * exp(-10.58 * (1.7 - rho))) -
         0.25 * (psi_rd - psi_s)
     f1_expected = clamp(f1_expected, 0.0, 1.0)
 
@@ -103,19 +113,25 @@ end
     # Test with distinct ψ_rd and ψ_soil values to verify separation
     psi_rd_Pa = -1.0e4  # -0.1 bar (root water potential at dawn)
     psi_soil_Pa = -5.0e4  # -0.5 bar (soil water potential)
-    prob2 = ODEProblem(compiled, Dict(compiled.ψ_rd => psi_rd_Pa, compiled.ψ_soil => psi_soil_Pa), tspan)
+    prob2 = ODEProblem(
+        compiled,
+        Dict(compiled.ψ_rd => psi_rd_Pa, compiled.ψ_soil => psi_soil_Pa),
+        tspan,
+    )
     sol2 = solve(prob2)
 
     psi_rd2 = psi_rd_Pa / one_bar
     psi_s2 = psi_soil_Pa / one_bar
-    f1_expected2 = 0.5 * (psi_trd - 5.4 * abs(psi_s2)^0.25 * exp(-10.58 * (1.7 - rho))) -
+    f1_expected2 =
+        0.5 * (psi_trd - 5.4 * abs(psi_s2)^0.25 * exp(-10.58 * (1.7 - rho))) -
         0.25 * (psi_rd2 - psi_s2)
     f1_expected2 = clamp(f1_expected2, 0.0, 1.0)
 
     @test sol2[compiled.f1][1] ≈ f1_expected2 rtol = 1.0e-6
 end
 
-@testitem "MaizeRootGrowth: Equation Verification - f₂" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Equation Verification - f₂" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Verify f₂ temperature favorability
     sys = MaizeRootGrowth()
     compiled = mtkcompile(sys)
@@ -139,7 +155,8 @@ end
     @test sol_hot[compiled.f2][1] ≈ f2_expected_hot rtol = 1.0e-3
 end
 
-@testitem "MaizeRootGrowth: Equation Verification - f₃" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Equation Verification - f₃" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Verify f₃ aeration favorability
     # f₃ = ([O₂] - 0.02)^7.14 where [O₂] in mol/L
     sys = MaizeRootGrowth()
@@ -158,7 +175,8 @@ end
     @test sol_low[compiled.f3][1] ≈ f3_expected rtol = 1.0e-3
 end
 
-@testitem "MaizeRootGrowth: Equation Verification - f₄" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Equation Verification - f₄" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Verify f₄ root density favorability
     # f₄ = 1 - min(1, (M+Y)/0.03)
     sys = MaizeRootGrowth()
@@ -183,7 +201,8 @@ end
     @test sol_over[compiled.f4][1] ≈ 0.0 atol = 1.0e-10
 end
 
-@testitem "MaizeRootGrowth: Equation Verification - f̃₁(ψ)" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Equation Verification - f̃₁(ψ)" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Verify f̃₁ water potential factor for diffusion (Eq. 4)
     # f̃₁(ψ) = 0.5*sin(π*(ψ-(ψ_s+ψ_r)/2)/(ψ_s-ψ_r)) + 0.5
     # ψ_s = -150 cm, ψ_r = -500 cm, midpoint = -325 cm
@@ -211,7 +230,8 @@ end
     @test sol_dry[compiled.f_tilde_psi][1] ≈ 0.0 atol = 1.0e-3
 end
 
-@testitem "MaizeRootGrowth: Equation Verification - R̄ (Eq. 2)" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Equation Verification - R̄ (Eq. 2)" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Verify R̄ = (M + Y) × A × min{f₁, f₂, f₃, f₄}
     sys = MaizeRootGrowth()
     compiled = mtkcompile(sys)
@@ -245,7 +265,8 @@ end
     @test all(sol[compiled.M] .>= -1.0e-15)
 end
 
-@testitem "MaizeRootGrowth: Maturation Conservation" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Maturation Conservation" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Test that total root carbon (Y + M) increases at the rate of carbon input R
     # and that the maturation term transfers from Y to M without loss
     sys = MaizeRootGrowth()
@@ -281,7 +302,7 @@ end
     prob = ODEProblem(
         compiled,
         Dict(compiled.R_total => R_val, compiled.T_YM => T_YM_val),
-        tspan
+        tspan,
     )
     sol = solve(prob)
 
@@ -297,7 +318,8 @@ end
     @test abs(dYdt) < 0.1 * T_YM_val * Y_end || Y_end < 1.0e-10
 end
 
-@testitem "MaizeRootGrowth: Temperature Favorability" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Temperature Favorability" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Test f₂ behavior:
     # - f₂ = 1 for T in [18, 33] °C
     # - f₂ < 1 for T < 18 or T > 33
@@ -307,20 +329,12 @@ end
     tspan = (0.0, 1.0 * one_day)
 
     # At 25°C (298K), f2 should be 1.0
-    prob_optimal = ODEProblem(
-        compiled,
-        Dict(compiled.T_soil => 298.0),
-        tspan
-    )
+    prob_optimal = ODEProblem(compiled, Dict(compiled.T_soil => 298.0), tspan)
     sol_optimal = solve(prob_optimal)
     @test sol_optimal.retcode == SciMLBase.ReturnCode.Success
 
     # At 10°C (283K), f2 should be < 1
-    prob_cold = ODEProblem(
-        compiled,
-        Dict(compiled.T_soil => 283.0),
-        tspan
-    )
+    prob_cold = ODEProblem(compiled, Dict(compiled.T_soil => 283.0), tspan)
     sol_cold = solve(prob_cold)
     @test sol_cold.retcode == SciMLBase.ReturnCode.Success
 
@@ -330,40 +344,36 @@ end
     @test total_optimal > total_cold
 end
 
-@testitem "MaizeRootGrowth: High Root Density Limits Growth" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: High Root Density Limits Growth" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # When M + Y approaches 0.03 kg/m³ threshold, f4 → 0 and growth should slow
     sys = MaizeRootGrowth()
     compiled = mtkcompile(sys)
 
     # Start with high initial root density near the threshold
     tspan = (0.0, 10.0 * one_day)
-    prob_high = ODEProblem(
-        compiled,
-        Dict(compiled.Y => 0.001, compiled.M => 0.028),
-        tspan
-    )
+    prob_high = ODEProblem(compiled, Dict(compiled.Y => 0.001, compiled.M => 0.028), tspan)
     sol_high = solve(prob_high)
 
     # Start with low initial root density
-    prob_low = ODEProblem(
-        compiled,
-        Dict(compiled.Y => 0.001, compiled.M => 0.0),
-        tspan
-    )
+    prob_low = ODEProblem(compiled, Dict(compiled.Y => 0.001, compiled.M => 0.0), tspan)
     sol_low = solve(prob_low)
 
     @test sol_high.retcode == SciMLBase.ReturnCode.Success
     @test sol_low.retcode == SciMLBase.ReturnCode.Success
 
     # Growth rate should be slower when starting near threshold
-    growth_high = (sol_high[compiled.Y][end] + sol_high[compiled.M][end]) -
+    growth_high =
+        (sol_high[compiled.Y][end] + sol_high[compiled.M][end]) -
         (sol_high[compiled.Y][1] + sol_high[compiled.M][1])
-    growth_low = (sol_low[compiled.Y][end] + sol_low[compiled.M][end]) -
+    growth_low =
+        (sol_low[compiled.Y][end] + sol_low[compiled.M][end]) -
         (sol_low[compiled.Y][1] + sol_low[compiled.M][1])
     @test growth_low > growth_high
 end
 
-@testitem "MaizeRootGrowth: Positivity Preservation" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Positivity Preservation" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Y and M should remain non-negative for various initial conditions
     sys = MaizeRootGrowth()
     compiled = mtkcompile(sys)
@@ -371,11 +381,7 @@ end
     tspan = (0.0, 60.0 * one_day)
 
     # Test with very small initial Y
-    prob = ODEProblem(
-        compiled,
-        Dict(compiled.Y => 1.0e-8, compiled.M => 0.0),
-        tspan
-    )
+    prob = ODEProblem(compiled, Dict(compiled.Y => 1.0e-8, compiled.M => 0.0), tspan)
     sol = solve(prob)
 
     @test sol.retcode == SciMLBase.ReturnCode.Success
@@ -383,7 +389,8 @@ end
     @test all(sol[compiled.M] .>= -1.0e-15)
 end
 
-@testitem "MaizeRootGrowth: Diffusion Factors (Eq. 4)" setup = [MaizeRootSetup] tags = [:maize] begin
+@testitem "MaizeRootGrowth: Diffusion Factors (Eq. 4)" setup = [MaizeRootSetup] tags =
+    [:maize] begin
     # Verify diffusion factors f̃₁ and f̃₂ from Eq. 4
     # D_eff = D⁰ × min(f̃₁, f̃₂) — D_eff itself is only relevant in the PDE form,
     # but the factors are observable from the compiled ODE system.
@@ -411,8 +418,8 @@ end
     # Hand-compute: p=10000, T₀=295, q=1, u=18000
     # (1+e^(1-18000/295)) × e^(10000/280-10000/295) / (1+e^(1-18000/280))
     # ≈ 1 × e^(35.71-33.90) / 1 = e^1.81 ≈ 6.11
-    f2_T_expected = (1.0 + exp(1.0 - 18000.0 / 295.0)) *
-        exp(10000.0 / 280.0 - 10000.0 / 295.0) /
+    f2_T_expected =
+        (1.0 + exp(1.0 - 18000.0 / 295.0)) * exp(10000.0 / 280.0 - 10000.0 / 295.0) /
         (1.0 + exp(1.0 - 18000.0 / 280.0))
     @test sol_cold[compiled.f_tilde_T][1] ≈ max(1.0, f2_T_expected) rtol = 1.0e-3
     @test sol_cold[compiled.f_tilde_T][1] > 1.0
